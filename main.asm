@@ -1,11 +1,11 @@
-SCREEN_COUNT EQU 2
+BLACK EQU 0
+GREEN EQU 10
+WHITE EQU 15
 
 .model small
 .stack 100h
 
 .data
-
-Screens db 320 * 200 * SCREEN_COUNT dup (0)
 
 DrawX dw ?
 DrawY db ?
@@ -25,8 +25,10 @@ setup_graphics_mode MACRO
     mov ah, 0      ; Function to set video mode
     mov al, 13h    ; Mode 13h (320x200, 256 colors)
     int 10h        ; Call BIOS interrupt
+ENDM
 
-    mov ax, seg Screens      ; Load video memory segment into AX
+setup_draw_es MACRO
+    mov ax, 0A000h      ; Load video memory segment into AX
     mov es, ax          ; Move AX into ES
 ENDM
 
@@ -51,6 +53,15 @@ ENDM
 ;
 ;
 
+apply_draw_di MACRO
+    mov al, DrawY
+    mov ah, 0
+    mov dx, 320
+    mul dx
+    add ax, DrawX
+    mov di, ax
+ENDM
+
 clear_screen MACRO
     mov al, DrawColor
     mov ah, DrawColor
@@ -70,10 +81,14 @@ draw_rect MACRO unique_label
     add ax, DrawX
     mov di, ax
 
+    mov ax, DrawWidth
+    mov dx, 2
+    div dx
+    mov cx, ax
+
     mov al, DrawColor
     mov ah, DrawColor
 
-    mov cx, DrawWidth
     rep stosw
 
     inc bl
@@ -87,22 +102,42 @@ ENDM
 
 ;
 ;
+; Sprites
+;
+;
+
+
+draw_block MACRO unique_label
+    mov DrawWidth, 7
+    mov DrawHeight, 7
+    draw_rect unique_label
+
+    apply_draw_di
+    mov [es:di], WHITE
+    add di, 321
+    mov [es:di], WHITE
+    add di, 1
+    mov [es:di], WHITE
+ENDM
+
+
+;
+;
 ; Main
 ;
 ;
 
 main proc
     setup_graphics_mode
+    setup_draw_es
 
-    mov DrawColor, 0
+    mov DrawColor, BLACK
     clear_screen
 
     mov DrawX, 30
     mov DrawY, 60
-    mov DrawWidth, 60
-    mov DrawHeight, 40
-    mov DrawColor, 14
-    draw_rect u58403
+    mov DrawColor, GREEN
+    draw_block u58403
 
     ; Wait for a key press to exit
     mov ah, 0           ; Wait for user input
