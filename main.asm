@@ -35,7 +35,6 @@ BLOCK_DL EQU BLOCK_D + BLOCK_L
 BLOCK_DLL EQU BLOCK_D + BLOCK_L * 2
 BLOCK_DDDLL EQU BLOCK_D * 3 + BLOCK_L * 2
 
-
 .model small
 .stack 100h
 
@@ -132,7 +131,7 @@ ENDM
 ;
 ;
 
-draw_block MACRO
+draw_block PROC
     mov ah, al
 
     mov al, WHITE
@@ -160,81 +159,41 @@ draw_block MACRO
     stosw
     stosb
 
+    mov cx, 4
+
+    draw_row:
     add di, 320 - 7
     stosw
     stosw
     stosw
     stosb
 
-    add di, 320 - 7
-    stosw
-    stosw
-    stosw
-    stosb
-
-    add di, 320 - 7
-    stosw
-    stosw
-    stosw
-    stosb
-
-    add di, 320 - 7
-    stosw
-    stosw
-    stosw
-    stosb
+    loop draw_row
 
     sub di, 320 * 6 + 7
-ENDM
 
-clear_block MACRO
+    ret
+ENDP
+
+clear_block PROC
     mov ah, al
+    mov cx, 7
 
+    clear_row:
     stosw
     stosw
     stosw
     stosw
-
     add di, 320 - 8
-    stosw
-    stosw
-    stosw
-    stosw
 
-    add di, 320 - 8
-    stosw
-    stosw
-    stosw
-    stosw
+    loop clear_row
 
-    add di, 320 - 8
-    stosw
-    stosw
-    stosw
-    stosw
+    sub di, 320 * 7 + 8
 
-    add di, 320 - 8
-    stosw
-    stosw
-    stosw
-    stosw
+    ret
+ENDP
 
-    add di, 320 - 8
-    stosw
-    stosw
-    stosw
-    stosw
-
-    add di, 320 - 8
-    stosw
-    stosw
-    stosw
-    stosw
-
-    sub di, 320 * 6 + 8
-ENDM
-
-draw_piece MACRO
+draw_piece PROC
     mov di, ActivePiecePos
 
     mov al, ActivePieceRot
@@ -258,19 +217,21 @@ draw_piece MACRO
     lea si, PieceDrawJumps
     add si, dx
     add di, [si]
-    draw_block
+    call draw_block
     add si, 2
     add di, [si]
-    draw_block
+    call draw_block
     add si, 2
     add di, [si]
-    draw_block
+    call draw_block
     add si, 2
     add di, [si]
-    draw_block
-ENDM
+    call draw_block
 
-clear_piece MACRO
+    ret
+ENDP
+
+clear_piece PROC
     mov bl, al
     mov di, ActivePiecePos
 
@@ -290,17 +251,19 @@ clear_piece MACRO
     mov ah, bl
 
     add di, [si]
-    clear_block
+    call clear_block
     add si, 2
     add di, [si]
-    clear_block
+    call clear_block
     add si, 2
     add di, [si]
-    clear_block
+    call clear_block
     add si, 2
     add di, [si]
-    clear_block
-ENDM
+    call clear_block
+
+    ret
+ENDP
 
 
 
@@ -317,7 +280,9 @@ check_key_into_al MACRO key
 ENDM
 
 update_button MACRO button, key0, key1
-    mov [button + 1], button
+    mov al, button
+    mov [button + 1], al
+
     not [button + 1]
 
     check_key_into_al key0
@@ -326,15 +291,26 @@ update_button MACRO button, key0, key1
     check_key_into_al key1
     or button, al
 
-    mov [button + 2], button
-    and [button + 2], [button + 1]    
+    mov al, button
+    mov [button + 2], al
+    mov al, [button + 1]
+    and [button + 2], al
 ENDM
 
-update_buttons MACRO
+update_buttons PROC
     update_button ButtonRight, KEY_RIGHT, KEY_D
     update_button ButtonLeft,  KEY_LEFT,  KEY_A
     update_button ButtonUp,    KEY_UP,    KEY_W
     update_button ButtonDown,  KEY_DOWN,  KEY_S
+
+    ret
+ENDP
+
+cmp_button_to_0 MACRO button
+    cmp button, 0
+ENDM
+cmp_button_down_to_0 MACRO button
+    cmp [button + 2], 0
 ENDM
 
 
@@ -369,7 +345,7 @@ ENDM
 ;
 ;
 
-start MACRO
+game_start MACRO
     setup_data_segment
     setup_graphics_mode
     setup_draw_es
@@ -380,26 +356,36 @@ start MACRO
     mov ActivePiece, PIECE_T
     mov ActivePiecePos, 320 * 8 * 8 + 40
     mov ActivePieceRot, 0
+    call draw_piece
 ENDM
 
-update MACRO
+game_update MACRO
+    call update_buttons
+
+    call clear_piece
+
+    cmp_button_down_to_0 ButtonUp
+    je after_rotation
     rotate_clockwise
-    draw_piece
+    after_rotation:
+
+    call draw_piece
 ENDM
 
-end MACRO
+game_end MACRO
     quit
 ENDM
 
 main proc
-    start
+    game_start
 
     update:
-    update
+    game_update
 
     check_key_into_al KEY_ESC
-    jz update    
+    cmp al, 0
+    je update
 
-    end
+    game_end
 main endp
 end main
