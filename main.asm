@@ -8,6 +8,16 @@ PURPLE EQU 34
 YELLOW EQU 43
 CYAN EQU 55
 
+KEY_RIGHT    EQU 4Dh
+KEY_LEFT     EQU 4Bh
+KEY_UP       EQU 48h
+KEY_DOWN     EQU 50h
+KEY_D        EQU 20h
+KEY_A        EQU 1Eh
+KEY_W        EQU 11h
+KEY_S        EQU 1Fh
+KEY_ESC      EQU 1
+
 PIECE_O EQU 0
 PIECE_I EQU 1
 PIECE_S EQU 2
@@ -31,12 +41,32 @@ BLOCK_DDDLL EQU BLOCK_D * 3 + BLOCK_L * 2
 
 .data
 
+;
+;
+; Imutable
+;
+;
+
 ;                                | O                              | I                                       | S                                     | Z                                     | L                                      | J                                    | T                                    |
 PieceColors                   db   YELLOW,                          CYAN,                                     RED,                                    GREEN,                                  ORANGE,                                  PINK,                                  PURPLE
 PieceDrawJumps                dw   0, BLOCK_R, BLOCK_DL, BLOCK_R,   0, BLOCK_D, BLOCK_D, BLOCK_D,             BLOCK_D, BLOCK_R, BLOCK_DLL, BLOCK_R,   BLOCK_D, BLOCK_R, BLOCK_D, BLOCK_R,     0, BLOCK_D, BLOCK_D, BLOCK_R,            BLOCK_R, BLOCK_D, BLOCK_DL, BLOCK_R,   BLOCK_DL, BLOCK_R, BLOCK_R, BLOCK_DL
 PieceDrawJumps90DegClockwise  dw   0, BLOCK_R, BLOCK_DL, BLOCK_R,   BLOCK_DDDLL, BLOCK_R, BLOCK_R, BLOCK_R,   0, BLOCK_D, BLOCK_R, BLOCK_D,           BLOCK_R, BLOCK_DL, BLOCK_R, BLOCK_DL,   BLOCK_DL, BLOCK_R, BLOCK_R, BLOCK_DLL,   BLOCK_DL, BLOCK_D, BLOCK_R, BLOCK_R,   0, BLOCK_DL, BLOCK_R, BLOCK_D
 PieceDrawJumps180Deg          dw   0, BLOCK_R, BLOCK_DL, BLOCK_R,   0, BLOCK_D, BLOCK_D, BLOCK_D,             BLOCK_D, BLOCK_R, BLOCK_DLL, BLOCK_R,   BLOCK_D, BLOCK_R, BLOCK_D, BLOCK_R,     0, BLOCK_R, BLOCK_D, BLOCK_D,            0, BLOCK_R, BLOCK_DL, BLOCK_D,         BLOCK_D, BLOCK_DL, BLOCK_R, BLOCK_R
 PieceDrawJumps270DegClockwise dw   0, BLOCK_R, BLOCK_DL, BLOCK_R,   BLOCK_DDDLL, BLOCK_R, BLOCK_R, BLOCK_R,   0, BLOCK_D, BLOCK_R, BLOCK_D,           BLOCK_R, BLOCK_DL, BLOCK_R, BLOCK_DL,   BLOCK_DR, BLOCK_DLL, BLOCK_R, BLOCK_R,   BLOCK_DL, BLOCK_R, BLOCK_R, BLOCK_D,   0, BLOCK_D, BLOCK_R, BLOCK_DL
+
+
+
+;
+;
+; Mutable
+;
+;
+
+;                HELD, NOT_HELD_OLD, PRESSED_DOWN
+ButtonRight db   0,    0,            0
+ButtonLeft  db   0,    0,            0
+ButtonUp    db   0,    0,            0
+ButtonDown  db   0,    0,            0
 
 ActivePiece db ?
 ActivePiecePos dw ?
@@ -276,6 +306,41 @@ ENDM
 
 ;
 ;
+; Input
+;
+;
+
+check_key_into_al MACRO key
+    mov ah, 02h
+    mov al, key
+    int 16h
+ENDM
+
+update_button MACRO button, key0, key1
+    mov [button + 1], button
+    not [button + 1]
+
+    check_key_into_al key0
+    mov button, al
+
+    check_key_into_al key1
+    or button, al
+
+    mov [button + 2], button
+    and [button + 2], [button + 1]    
+ENDM
+
+update_buttons MACRO
+    update_button ButtonRight, KEY_RIGHT, KEY_D
+    update_button ButtonLeft,  KEY_LEFT,  KEY_A
+    update_button ButtonUp,    KEY_UP,    KEY_W
+    update_button ButtonDown,  KEY_DOWN,  KEY_S
+ENDM
+
+
+
+;
+;
 ; Gameplay
 ;
 ;
@@ -283,15 +348,16 @@ ENDM
 rotate_clockwise MACRO
     add ActivePieceRot, 1
     mov al, ActivePieceRot
-    mov ah, 4
-    div ah
+    mov bl, 4
+    div bl
     mov ActivePieceRot, ah
 ENDM
+
 rotate_counter_clockwise MACRO
     add ActivePieceRot, 3
     mov al, ActivePieceRot
-    mov ah, 4
-    div ah
+    mov bl, 4
+    div bl
     mov ActivePieceRot, ah
 ENDM
 
@@ -303,7 +369,7 @@ ENDM
 ;
 ;
 
-main proc
+start MACRO
     setup_data_segment
     setup_graphics_mode
     setup_draw_es
@@ -311,23 +377,29 @@ main proc
     mov al, BLACK
     clear_screen
 
-    mov ActivePiece, PIECE_S
+    mov ActivePiece, PIECE_T
     mov ActivePiecePos, 320 * 8 * 8 + 40
     mov ActivePieceRot, 0
-    draw_piece
+ENDM
 
-    funny:
-    ; Wait for a key press to exit
-    mov ah, 0           ; Wait for user input
-    int 16h             ; BIOS keyboard interrupt
-
-    mov al, BLACK
-    clear_piece
+update MACRO
     rotate_clockwise
     draw_piece
+ENDM
 
-    jmp funny
-
+end MACRO
     quit
+ENDM
+
+main proc
+    start
+
+    update:
+    update
+
+    check_key_into_al KEY_ESC
+    jz update    
+
+    end
 main endp
 end main
