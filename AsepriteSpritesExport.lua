@@ -11,31 +11,34 @@ if sprite.colorMode ~= ColorMode.INDEXED then
   return
 end
 
--- Dimensions
-local tileWidth = 8
-local tileHeight = 8
+-- Dialog to ask for tile size
+local dlg = Dialog("Export Sprite BIN")
+dlg:number{ id="tileWidth", label="Tile Width:", min=1, max=32, value=8 }
+dlg:number{ id="tileHeight", label="Tile Height:", min=1, max=32, value=8 }
+dlg:file{ id="exportFile", label="BIN Output", title="Export as .bin", open=false, save=true, filetypes={"bin"} }
+dlg:button{ id="ok", text="Export" }
+dlg:button{ id="cancel", text="Cancel" }
 
+dlg:show()
+
+local data = dlg.data
+if not data.ok then return end
+
+local tileWidth = data.tileWidth
+local tileHeight = data.tileHeight
+
+-- Dimensions
 local imageWidth = sprite.width
 local imageHeight = sprite.height
 
 if imageWidth % tileWidth ~= 0 or imageHeight % tileHeight ~= 0 then
-  app.alert("Image dimensions must be a multiple of 8.")
+  app.alert("Image dimensions must be a multiple of the tile size.")
   return
 end
 
 local tilesX = imageWidth // tileWidth
 local tilesY = imageHeight // tileHeight
 local totalTiles = tilesX * tilesY
-
--- Dialog
-local dlg = Dialog("Export Sprite BIN")
-dlg:file{ id="exportFile", label="BIN Output", title="Export as .bin", open=false, save=true, filetypes={"bin"} }
-dlg:button{ id="ok", text="Export" }
-dlg:button{ id="cancel", text="Cancel" }
-dlg:show()
-
-local data = dlg.data
-if not data.ok then return end
 
 -- Process
 local outputFile = io.open(data.exportFile, "wb")

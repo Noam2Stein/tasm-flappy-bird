@@ -1,6 +1,16 @@
 .model small
 .stack 100h
 
+; INFO:
+
+; * uses graphics mode 13h.
+
+; * loads all sprites as one large buffer layed out sprite after sprite,
+;   where each sprite is 16x16.
+;   the sprites are loaded at runtime into a reserved data-segment variable from a binary file.
+
+; * positions are stored in subpixels. subpixel = 1/16 pixels.
+
 ; ***************************************************
 ; ***************************************************
 ; ***************************************************
@@ -13,11 +23,24 @@
 ; ***************************************************
 ; ***************************************************
 
+; DIMENSIONS
+
 SCREEN_WIDTH equ 320
 SCREEN_HEIGHT equ 200
 
-SPRITE_WIDTH equ 8
-SPRITE_HEIGHT equ 8
+SPRITE_WIDTH equ 16
+SPRITE_HEIGHT equ 16
+SPRITE_COUNT equ 8 * 8
+SPRITES_BUF_SIZE equ SPRITE_WIDTH * SPRITE_HEIGHT * SPRITE_COUNT
+
+; COLORS
+
+BACKGROUND_COLOR equ 53
+
+; GAMEPLAY
+
+INITIAL_PLAYER_POSITION_Y equ SCREEN_HEIGHT / 2 * 16
+PLAYER_POSITION_X equ SCREEN_WIDTH / 5 * 16
 
 ; **********************************************
 ; **********************************************
@@ -32,7 +55,16 @@ SPRITE_HEIGHT equ 8
 ; **********************************************
 
 .data
-    FileHandle     dw ? ; used when loading files
+
+;
+;
+;
+; GAME LOOP
+;
+;
+;
+
+ExitGame db 0
 
 ;
 ;
@@ -43,9 +75,20 @@ SPRITE_HEIGHT equ 8
 ;
 
     SpritesFileName db "Sprites.bin"
+    SpritesFileHandle     dw ?
 
-;              |||||<---- 144 * 16 * 16 = 36864
-    Sprites db 36864 dup(?) ; reserve memory for sprite palette which has 144 16x16 sprites.
+    Sprites db SPRITES_BUF_SIZE dup(?) ; reserve memory for sprite palette which has 256 8x8 sprites.
+
+;
+;
+;
+; GAMEPLAY
+;
+;
+;
+
+    PlayerPositionY dw INITIAL_PLAYER_POSITION_Y
+    PlayerVelocityY dw 0
 
 ; **********************************************
 ; **********************************************
@@ -60,6 +103,23 @@ SPRITE_HEIGHT equ 8
 ; **********************************************
 
 .code
+
+;
+;
+;
+;
+; INITIALIZATION
+;
+;
+;
+;
+
+magic MACRO
+    mov ax, 'a' + 'x'
+    mov bx, 'b' + 'x'
+    mov cx, 'c' + 'x'
+    mov dx, 'd' + 'x'
+ENDM
 
 ; changes `ax`, and `ds`.
 init_ds_as_data_segment MACRO
@@ -86,11 +146,11 @@ load_sprites PROC
     mov dx, offset SpritesFileName
     int 21h
     jc load_failed         ; jump if failed
-    mov [FileHandle], ax   ; store file handle
+    mov [SpritesFileHandle], ax   ; store file handle
 
     ; read file (INT 21h, AH = 3Fh)
     mov ah, 3Fh            ; read from file
-    mov bx, [FileHandle]   ; file handle
+    mov bx, [SpritesFileHandle]   ; file handle
     mov cx, 36864          ; number of bytes to read
     mov dx, offset Sprites
     int 21h
@@ -98,7 +158,7 @@ load_sprites PROC
 
     ; close file (INT 21h, AH = 3Eh)
     mov ah, 3Eh
-    mov bx, [FileHandle]
+    mov bx, [SpritesFileHandle]
     int 21h
 
     ret
@@ -108,10 +168,20 @@ load_sprites PROC
     ret
 load_sprites ENDP
 
-; put the clear color in `al`.
+;
+;
+;
+;
+; RENDERING
+;
+;
+;
+;
+
 ; changes `ax`, `cx`, and `di`.
-clear_screen_to_al MACRO
-    mov ah, al
+clear_screen MACRO
+    mov al, BACKGROUND_COLOR
+    mov ah, BACKGROUND_COLOR
     mov cx, SCREEN_WIDTH * SCREEN_HEIGHT / 2
     mov di, 0
     rep stosw
@@ -155,6 +225,140 @@ draw_sprite PROC
     ret
 draw_sprite ENDP
 
+; clears a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
+; put x coordinate in `ax` and y coordinate in `bx`.
+; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
+clear_sprite PROC
+    call set_di_from_xy_ax_bx
+
+    mov cx, SPRITE_HEIGHT
+
+    clear_row:
+    push cx
+    mov cx, SPRITE_WIDTH / 2
+    mov al, BACKGROUND_COLOR
+    mov ah, BACKGROUND_COLOR
+    rep stosw
+    add di, SCREEN_WIDTH - SPRITE_WIDTH
+    pop cx
+
+    loop clear_row
+
+    ret
+clear_sprite ENDP
+
+;
+;
+;
+;
+; GAMEPLAY
+;
+;
+;
+;
+
+; doesn't return, instead jumps to `update_loop`.
+; meant to be jumped to, and not to be called.
+reset_game PROC
+    mov PlayerPositionY, INITIAL_PLAYER_POSITION_Y
+    mov PlayerVelocityY, 0
+
+    jmp update_loop
+reset_game ENDP
+
+apply_player_position MACRO
+    mov ax, PLAYER_POSITION_X / 16
+    mov bx, PlayerPositionY
+    shr bx, 4 ; divide by 16
+    mov bh, 0 ; reset overflowed bits
+ENDM
+
+update_player_movement PROC
+    ; clear at old position
+    apply_player_position
+    call clear_sprite
+
+    ; update velocity and position
+    inc PlayerVelocityY
+    mov ax, PlayerVelocityY
+    add PlayerPositionY, ax
+
+    ; check if player fell
+    cmp PlayerPositionY, (SCREEN_HEIGHT - SPRITE_HEIGHT) * 16
+    jae reset_game
+
+    ; draw at new position
+    apply_player_position
+    mov si, offset Sprites
+    call draw_sprite
+
+    ret
+update_player_movement ENDP
+
+;
+;
+;
+;
+; GAME LOOP
+;
+;
+;
+;
+
+wait_milliseconds MACRO milliseconds
+    mov ah, 86h
+    mov cx, 0 ; high word of time to wait is 0
+    mov dx, milliseconds * 1000
+    int 15h
+ENDM
+
+;
+
+initialize PROC
+    magic
+    init_video_mode
+    init_ds_as_data_segment
+    call load_sprites
+
+    clear_screen
+
+    ret
+initialize ENDP
+
+;
+
+update PROC
+    call update_player_movement
+
+    wait_milliseconds 20
+
+    ret
+update ENDP
+
+;
+
+clean_up PROC
+    ; set video mode to 3h (text mode 80x25)
+    mov ah, 0
+    mov al, 3
+    int 10h
+
+    ; clear screen
+    mov ah, 06h      ; scroll up function
+    mov al, 0        ; entire screen
+    mov bh, 07h      ; attribute (light gray on black)
+    mov cx, 0        ; upper-left corner (row 0, col 0)
+    mov dx, 184FH    ; lower-right corner (row 24, col 79)
+    int 10h
+
+    ; return control to DOS
+    mov ax, 4C00h
+    int 21h
+
+    ret
+clean_up ENDP
+
+;
 ;
 ;
 ;
@@ -162,19 +366,18 @@ draw_sprite ENDP
 ;
 ;
 ;
+;
 
 main PROC
-    init_ds_as_data_segment
-    init_video_mode
-    call load_sprites
+    call initialize
 
-    mov al, 1
-    clear_screen_to_al
+    update_loop:
+    call update
 
-    mov ax, SCREEN_WIDTH / 2 - SPRITE_WIDTH / 2
-    mov bx, SCREEN_HEIGHT / 2 - SPRITE_HEIGHT / 2
-    mov si, offset Sprites
-    call draw_sprite
+    cmp ExitGame, 0
+    je update_loop
+
+    call clean_up
 main ENDP
 
 end main
