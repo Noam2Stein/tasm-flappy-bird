@@ -1,57 +1,63 @@
 .model small
 .stack 100h
 
-;
-;
-;
-;
-;
-; CONSTANTS
-;
-;
-;
-;
-;
+; ***************************************************
+; ***************************************************
+; ***************************************************
+; ***************************************************
+; ***************************************************
+; ******************** CONSTANTS ********************
+; ***************************************************
+; ***************************************************
+; ***************************************************
+; ***************************************************
+; ***************************************************
 
 SCREEN_WIDTH equ 320
 SCREEN_HEIGHT equ 200
 
-TEXTURE_WIDTH equ 8
-TEXTURE_HEIGHT equ 8
+TEXTURE_WIDTH equ 16
+TEXTURE_HEIGHT equ 16
 
-;
-;
-;
-;
-;
-; DATA
-;
-;
-;
-;
-;
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
+; ******************** DATA ********************
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
 
 .data
-    Texture db 0, 0, 4, 4, 4, 4, 0, 0, \
-               0, 4, 4, 4, 4, 4, 4, 0, \
-               4, 4, 4, 4, 4, 4, 4, 4, \
-               4, 4, 4, 4, 4, 4, 4, 4, \
-               4, 4, 4, 4, 4, 4, 4, 4, \
-               4, 4, 4, 4, 4, 4, 4, 4, \
-               0, 4, 4, 4, 4, 4, 4, 0, \
-               0, 0, 4, 4, 4, 4, 0, 0
+    FileHandle     dw ? ; used when loading files
 
 ;
 ;
 ;
-;
-;
-; CODE
-;
+; SPRITES
 ;
 ;
 ;
-;
+
+    SpritesFileName db "Sprites.bin"
+
+;              |||||<---- 144 * 16 * 16 = 36864
+    Sprites db 36864 dup(?) ; reserve memory for sprite palette which has 144 16x16 sprites.
+
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
+; ******************** CODE ********************
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
+; **********************************************
 
 .code
 
@@ -71,6 +77,36 @@ init_video_mode MACRO
     mov ax, 0A000h       ; Load the base address of video memory into AX
     mov es, ax           ; Set ES to point to video memory
 ENDM
+
+; changes `ax`, `bx`, `cx` and `dx`.
+load_sprites PROC
+    ; open file (INT 21h, AH = 3Dh)
+    mov ah, 3Dh            ; open file
+    mov al, 0              ; read-only mode
+    mov dx, offset SpritesFileName
+    int 21h
+    jc load_failed         ; jump if failed
+    mov [FileHandle], ax   ; store file handle
+
+    ; read file (INT 21h, AH = 3Fh)
+    mov ah, 3Fh            ; read from file
+    mov bx, [FileHandle]   ; file handle
+    mov cx, 36864          ; number of bytes to read
+    mov dx, offset Sprites
+    int 21h
+    jc load_failed         ; jump if failed
+
+    ; close file (INT 21h, AH = 3Eh)
+    mov ah, 3Eh
+    mov bx, [FileHandle]
+    int 21h
+
+    ret
+
+    load_failed:
+
+    ret
+load_sprites ENDP
 
 ; put the clear color in `al`.
 ; changes `ax`, `cx`, and `di`.
@@ -131,6 +167,7 @@ draw_sprite ENDP
 main PROC
     init_ds_as_data_segment
     init_video_mode
+    call load_sprites
 
     mov al, 1
     clear_screen_to_al
@@ -139,7 +176,7 @@ main PROC
     mov bx, SCREEN_HEIGHT / 2 - TEXTURE_HEIGHT / 2
     mov dx, TEXTURE_WIDTH
     mov cx, TEXTURE_HEIGHT
-    mov si, offset Texture
+    mov si, offset Sprites
     call draw_sprite
 main ENDP
 
