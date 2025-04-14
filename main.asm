@@ -173,8 +173,6 @@ main PROC
 
     mov ax, SCREEN_WIDTH / 2 - SPRITE_WIDTH / 2
     mov bx, SCREEN_HEIGHT / 2 - SPRITE_HEIGHT / 2
-    mov dx, SPRITE_WIDTH
-    mov cx, SPRITE_HEIGHT
     mov si, offset Sprites
     call draw_sprite
 main ENDP
