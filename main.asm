@@ -16,8 +16,8 @@
 SCREEN_WIDTH equ 320
 SCREEN_HEIGHT equ 200
 
-TEXTURE_WIDTH equ 16
-TEXTURE_HEIGHT equ 16
+SPRITE_WIDTH equ 8
+SPRITE_HEIGHT equ 8
 
 ; **********************************************
 ; **********************************************
@@ -134,24 +134,23 @@ set_di_from_xy_ax_bx PROC
     ret
 set_di_from_xy_ax_bx ENDP
 
+; draws a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
 ; put x coordinate in `ax` and y coordinate in `bx`.
-; put texture width in `dx` and texture height in `cx`.
-; put texture data-segment offset in `si`.
+; put sprite data-segment offset in `si`.
 ; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
 draw_sprite PROC
-    push cx ; `set_di_from_xy_ax_bx` changes `cx`
     call set_di_from_xy_ax_bx
-    pop cx
 
-    draw_line:
+    mov cx, SPRITE_HEIGHT
+
+    draw_row:
     push cx
-    mov cx, dx
+    mov cx, SPRITE_WIDTH
     rep movsb
-    add di, SCREEN_WIDTH
-    sub di, dx
+    add di, SCREEN_WIDTH - SPRITE_WIDTH
     pop cx
 
-    loop draw_line
+    loop draw_row
 
     ret
 draw_sprite ENDP
@@ -172,10 +171,10 @@ main PROC
     mov al, 1
     clear_screen_to_al
 
-    mov ax, SCREEN_WIDTH / 2 - TEXTURE_WIDTH / 2
-    mov bx, SCREEN_HEIGHT / 2 - TEXTURE_HEIGHT / 2
-    mov dx, TEXTURE_WIDTH
-    mov cx, TEXTURE_HEIGHT
+    mov ax, SCREEN_WIDTH / 2 - SPRITE_WIDTH / 2
+    mov bx, SCREEN_HEIGHT / 2 - SPRITE_HEIGHT / 2
+    mov dx, SPRITE_WIDTH
+    mov cx, SPRITE_HEIGHT
     mov si, offset Sprites
     call draw_sprite
 main ENDP

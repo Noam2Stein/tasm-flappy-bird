@@ -12,14 +12,14 @@ if sprite.colorMode ~= ColorMode.INDEXED then
 end
 
 -- Dimensions
-local tileWidth = 16
-local tileHeight = 16
+local tileWidth = 8
+local tileHeight = 8
 
 local imageWidth = sprite.width
 local imageHeight = sprite.height
 
 if imageWidth % tileWidth ~= 0 or imageHeight % tileHeight ~= 0 then
-  app.alert("Image dimensions must be a multiple of 16.")
+  app.alert("Image dimensions must be a multiple of 8.")
   return
 end
 
@@ -64,4 +64,4 @@ for tileY = 0, tilesY - 1 do
 end
 
 outputFile:close()
-app.alert("Exported " .. totalTiles .. " tiles (" .. totalTiles*256 .. " bytes).")
+app.alert("Exported " .. totalTiles .. " tiles (" .. totalTiles * (tileWidth * tileHeight) .. " bytes).")
