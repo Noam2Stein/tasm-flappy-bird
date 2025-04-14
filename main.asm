@@ -42,6 +42,15 @@ BACKGROUND_COLOR equ 53
 INITIAL_PLAYER_POSITION_Y equ SCREEN_HEIGHT / 2 * 16
 PLAYER_POSITION_X equ SCREEN_WIDTH / 5 * 16
 
+PLAYER_JUMP_VELOCITY equ -20
+
+END_OF_FRAME_WAIT equ 10
+
+; INPUT
+
+SPACE_MAKECODE equ 39h
+ESCAPE_MAKECODE equ 01h
+
 ; **********************************************
 ; **********************************************
 ; **********************************************
@@ -59,16 +68,6 @@ PLAYER_POSITION_X equ SCREEN_WIDTH / 5 * 16
 ;
 ;
 ;
-; GAME LOOP
-;
-;
-;
-
-ExitGame db 0
-
-;
-;
-;
 ; SPRITES
 ;
 ;
@@ -78,6 +77,16 @@ ExitGame db 0
     SpritesFileHandle     dw ?
 
     Sprites db SPRITES_BUF_SIZE dup(?) ; reserve memory for sprite palette which has 256 8x8 sprites.
+
+;
+;
+;
+; STATE
+;
+;
+;
+
+    GameStateUpdate dw offset update_idle_state
 
 ;
 ;
@@ -251,7 +260,26 @@ clear_sprite ENDP
 ;
 ;
 ;
-; GAMEPLAY
+; INPUT
+;
+;
+;
+;
+
+; `eq` flag represents whever or not the key was just triggered.
+; changes `al`.
+detect_key_trigger MACRO makecode
+    in al, 60h
+    cmp al, makecode
+
+
+ENDM
+
+;
+;
+;
+;
+; ACTIVE GAMEPLAY
 ;
 ;
 ;
@@ -263,6 +291,8 @@ reset_game PROC
     mov PlayerPositionY, INITIAL_PLAYER_POSITION_Y
     mov PlayerVelocityY, 0
 
+    mov GameStateUpdate, offset update_idle_state
+
     jmp update_loop
 reset_game ENDP
 
@@ -273,27 +303,73 @@ apply_player_position MACRO
     mov bh, 0 ; reset overflowed bits
 ENDM
 
+jump_check MACRO params
+    detect_key_trigger SPACE_MAKECODE
+    jne skip_jump
+
+    mov PlayerVelocityY, PLAYER_JUMP_VELOCITY
+
+    skip_jump:
+ENDM
+
 update_player_movement PROC
-    ; clear at old position
+    ; clear old player sprite
     apply_player_position
     call clear_sprite
 
-    ; update velocity and position
+    ; update velocity
     inc PlayerVelocityY
+    jump_check
+
+    ; update pposition
     mov ax, PlayerVelocityY
     add PlayerPositionY, ax
 
-    ; check if player fell
+    ; check if player fell to the bottom of the screen
     cmp PlayerPositionY, (SCREEN_HEIGHT - SPRITE_HEIGHT) * 16
     jae reset_game
 
-    ; draw at new position
+    ; draw new player sprite
     apply_player_position
     mov si, offset Sprites
     call draw_sprite
 
     ret
 update_player_movement ENDP
+
+update_active_state PROC
+    call update_player_movement
+
+    ret
+update_active_state ENDP
+
+;
+;
+;
+;
+; IDLE GAMEPLAY
+;
+;
+;
+;
+
+update_idle_state PROC
+    apply_player_position
+    mov si, offset Sprites
+    call draw_sprite
+
+    detect_key_trigger SPACE_MAKECODE
+    je activate
+
+    ret
+
+    activate:
+
+    mov GameStateUpdate, offset update_active_state
+
+    ret
+update_idle_state ENDP
+
 
 ;
 ;
@@ -328,9 +404,10 @@ initialize ENDP
 ;
 
 update PROC
-    call update_player_movement
+    mov ax, GameStateUpdate
+    call ax
 
-    wait_milliseconds 20
+    wait_milliseconds END_OF_FRAME_WAIT
 
     ret
 update ENDP
@@ -374,8 +451,8 @@ main PROC
     update_loop:
     call update
 
-    cmp ExitGame, 0
-    je update_loop
+    detect_key_trigger ESCAPE_MAKECODE
+    jne update_loop ; repeat update if escape wasn't pressed
 
     call clean_up
 main ENDP
