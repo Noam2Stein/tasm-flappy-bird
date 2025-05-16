@@ -173,7 +173,7 @@ SP_SCREEN_HEIGHT equ P_SCREEN_HEIGHT * PIXELS_TO_SUBPIXELS
 ; sets `cx` to the signed minimum of `cx` and `dx`
 set_min_cx PROC
     cmp cx, dx
-    jl min_pick_dx
+    jg min_pick_dx
 
     min_pick_cx:
     ret
@@ -186,7 +186,7 @@ set_min_cx ENDP
 ; sets `cx` to the signed maximum of `cx` and `dx`
 set_max_cx PROC
     cmp cx, dx
-    js max_pick_dx
+    jl max_pick_dx
 
     max_pick_cx:
     ret
@@ -279,6 +279,27 @@ set_sprite MACRO sprite
     mov si, offset SpritesBuf + sprite * SPRITE_BUF_SIZE
 ENDM
 
+draw_sprite_row MACRO
+    push cx
+
+    ; set `cx` to column count
+    mov cx, P_SPRITE_SIZE
+    mov dx, P_SCREEN_WIDTH
+    sub dx, ax ; dx is now `P_SCREEN_WIDTH - X_POS`
+    call set_min_cx ; don't draw out of bounds columns
+
+    push cx
+    rep movsb
+    pop cx
+
+    add si, P_SPRITE_SIZE
+    sub si, cx
+    add di, P_SCREEN_WIDTH
+    sub di, cx
+
+    pop cx
+ENDM
+
 ; draws a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
 ; put x coordinate in `ax` and y coordinate in `bx`.
 ; put sprite data-segment offset in `si`.
@@ -286,23 +307,27 @@ ENDM
 draw_sprite PROC
     call set_drawpos_di
 
-    mov cx, P_SPRITE_SIZE
-    mov dx, P_SCREEN_HEIGHT
-    sub dx, bx ; dx is now `P_SCREEN_HEIGHT - Y_POS`
-    call set_min_cx ; don't draw out of bounds rows
-
-    draw_row:
-    push cx
-
+    ; x culling
     mov cx, P_SPRITE_SIZE
     mov dx, P_SCREEN_WIDTH
     sub dx, ax ; dx is now `P_SCREEN_WIDTH - X_POS`
     call set_min_cx ; don't draw out of bounds columns
-    rep movsb
-    add di, P_SCREEN_WIDTH - P_SPRITE_SIZE
+    cmp cx, 0
+    jle skip_sprite_draw
 
-    pop cx
+    ; y culling & set `cx` to row count
+    mov cx, P_SPRITE_SIZE
+    mov dx, P_SCREEN_HEIGHT
+    sub dx, bx ; dx is now `P_SCREEN_HEIGHT - Y_POS`
+    call set_min_cx ; don't draw out of bounds rows
+    cmp cx, 0
+    jle skip_sprite_draw
+
+    draw_row:
+    draw_sprite_row
     loop draw_row
+
+    skip_sprite_draw:
 
     ret
 draw_sprite ENDP
@@ -448,7 +473,7 @@ init_pipepair_x_pos PROC
     push dx
 
     mov bx, dx
-    mov ax, 1170;SP_PIPEPAIR_XDISTANCE + SP_PIPE_WIDTH
+    mov ax, SP_PIPEPAIR_XDISTANCE + SP_PIPE_WIDTH
     mul bx
     
     pop dx
@@ -581,46 +606,12 @@ draw_top_pipe PROC
     ret
 draw_top_pipe ENDP
 
-; sets the `zero-flag` to false if the pipepair should be culled.
-; expects `dx` to contain the pipe index.
-pipepair_cull_check PROC
-    ; move x drawpos into `ax`
-    set_pipepair_si
-    set_pipepair_x_drawpos
-
-    mov bx, -SP_PIPE_WIDTH ; minimum visible pipe x-pos
-    cmp ax, bx
-    jle not_in_range
-
-    mov bx, SP_SCREEN_WIDTH ; maximum visible pipe x-pos
-    cmp ax, bx
-    jge not_in_range
-
-    jmp in_range
-
-    not_in_range:
-    mov ax, 0
-    mov bx, 1
-    cmp ax, bx
-    ret
-
-    in_range:
-    mov ax, 0
-    cmp ax, ax
-    ret
-pipepair_cull_check ENDP
-
 draw_pipes PROC
     pipepair_loop draw_pipes_loop
 
     push cx
-    call pipepair_cull_check
-    jne skip_pipepair_draw
-
     call draw_bottom_pipe
     call draw_top_pipe
-
-    skip_pipepair_draw:
     pop cx
 
     loop draw_pipes_loop
