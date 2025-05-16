@@ -35,7 +35,7 @@ SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
 SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 5
 SP_PLAYER_JUMP_VELOCITY equ -20
 
-PIPEPAIR_COUNT equ 10
+PIPEPAIR_COUNT equ 5
 T_PIPE_WIDTH equ 2
 T_PIPEPAIR_XDISTANCE equ 5
 T_PIPEPAIR_YDISTANCE equ 5
@@ -164,6 +164,42 @@ SP_SCREEN_HEIGHT equ P_SCREEN_HEIGHT * PIXELS_TO_SUBPIXELS
 ;
 ;
 ;
+; MATH
+;
+;
+;
+;
+
+; sets `cx` to the signed minimum of `cx` and `dx`
+set_min_cx PROC
+    cmp cx, dx
+    jl min_pick_dx
+
+    min_pick_cx:
+    ret
+
+    min_pick_dx:
+    mov cx, dx
+    ret
+set_min_cx ENDP
+
+; sets `cx` to the signed maximum of `cx` and `dx`
+set_max_cx PROC
+    cmp cx, dx
+    js max_pick_dx
+
+    max_pick_cx:
+    ret
+
+    max_pick_dx:
+    mov cx, dx
+    ret
+set_max_cx ENDP
+
+;
+;
+;
+;
 ; GRAPHICS
 ;
 ;
@@ -251,14 +287,21 @@ draw_sprite PROC
     call set_drawpos_di
 
     mov cx, P_SPRITE_SIZE
+    mov dx, P_SCREEN_HEIGHT
+    sub dx, bx ; dx is now `P_SCREEN_HEIGHT - Y_POS`
+    call set_min_cx ; don't draw out of bounds rows
 
     draw_row:
     push cx
+
     mov cx, P_SPRITE_SIZE
+    mov dx, P_SCREEN_WIDTH
+    sub dx, ax ; dx is now `P_SCREEN_WIDTH - X_POS`
+    call set_min_cx ; don't draw out of bounds columns
     rep movsb
     add di, P_SCREEN_WIDTH - P_SPRITE_SIZE
-    pop cx
 
+    pop cx
     loop draw_row
 
     ret
@@ -405,7 +448,7 @@ init_pipepair_x_pos PROC
     push dx
 
     mov bx, dx
-    mov ax, SP_PIPEPAIR_XDISTANCE + SP_PIPE_WIDTH
+    mov ax, 1170;SP_PIPEPAIR_XDISTANCE + SP_PIPE_WIDTH
     mul bx
     
     pop dx
