@@ -35,7 +35,8 @@ SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
 SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 5
 SP_PLAYER_JUMP_VELOCITY equ -20
 
-PIPEPAIR_COUNT equ 5
+PIPEPAIR_COUNT equ 10
+T_PIPE_WIDTH equ 2
 T_PIPEPAIR_XDISTANCE equ 5
 T_PIPEPAIR_YDISTANCE equ 5
 T_MIN_PIPE_HEIGHT equ 3
@@ -108,6 +109,7 @@ T_SCREEN_HEIGHT  equ P_SCREEN_HEIGHT / TILES_TO_PIXELS
 ;
 
 ; GAMEPLAY
+SP_PIPE_WIDTH equ T_PIPE_WIDTH * TILES_TO_SUBPIXELS
 SP_PIPEPAIR_XDISTANCE equ T_PIPEPAIR_XDISTANCE * TILES_TO_SUBPIXELS
 
 ; GRAPHICS
@@ -403,7 +405,7 @@ init_pipepair_x_pos PROC
     push dx
 
     mov bx, dx
-    mov ax, SP_PIPEPAIR_XDISTANCE + P_SPRITE_SIZE * 16 * 2
+    mov ax, SP_PIPEPAIR_XDISTANCE + SP_PIPE_WIDTH
     mul bx
     
     pop dx
@@ -473,78 +475,109 @@ set_top_pipe_drawpos MACRO
     
     set_pipepair_x_drawpos
 
-    set_pipepair_si
     mov bx, T_SCREEN_HEIGHT - T_PIPEPAIR_YDISTANCE - 1
     sub bx, [PipePairBottomHeights + si]
     shl bx, P_SPRITE_SIZE_LOG2
 ENDM
 
 ; expects `dx` to contain the pipe index.
+draw_pipe_row MACRO left_sprite, right_sprite
+    set_sprite left_sprite
+    call draw_sprite_pushed
+
+    move_drawpos_right
+
+    set_sprite right_sprite
+    call draw_sprite_pushed
+
+    move_drawpos_left
+    move_drawpos_up
+ENDM
+
+; expects `dx` to contain the pipe index.
+set_bottom_pipe_height_cx MACRO params
+    set_pipepair_si
+    mov cx, [PipePairBottomHeights + si]
+ENDM
+
+; expects `dx` to contain the pipe index.
+set_top_pipe_height_cx MACRO
+    set_pipepair_si
+    mov ax, [PipePairBottomHeights + si]
+    mov cx, P_SCREEN_HEIGHT / P_SPRITE_SIZE - T_PIPEPAIR_YDISTANCE
+    sub cx, ax
+ENDM
+
+; expects `dx` to contain the pipe index.
 draw_bottom_pipe PROC
     set_bottom_pipe_drawpos
 
-    set_pipepair_si
-    mov cx, [PipePairBottomHeights + si]
+    set_bottom_pipe_height_cx
     dec cx
-    draw_bottom_pipe_row:
+    draw_bottom_pipe_rows:
+    draw_pipe_row PIPE_L_SPRITE, PIPE_R_SPRITE
+    loop draw_bottom_pipe_rows
 
-    set_sprite PIPE_L_SPRITE
-    call draw_sprite_pushed
-    move_drawpos_right
-    set_sprite PIPE_R_SPRITE
-    call draw_sprite_pushed
-    move_drawpos_left
-    move_drawpos_up
-
-    loop draw_bottom_pipe_row
-
-    set_sprite PIPE_L_TOP_SPRITE
-    call draw_sprite_pushed
-    move_drawpos_right
-    set_sprite PIPE_R_TOP_SPRITE
-    call draw_sprite_pushed
+    draw_pipe_row PIPE_L_TOP_SPRITE, PIPE_R_TOP_SPRITE
 
     ret
 draw_bottom_pipe ENDP
 
 ; expects `dx` to contain the pipe index.
 draw_top_pipe PROC
-
-    set_pipepair_si
-    mov ax, [PipePairBottomHeights + si]
-    mov cx, P_SCREEN_HEIGHT / P_SPRITE_SIZE - T_PIPEPAIR_YDISTANCE
-    sub cx, ax
+    set_top_pipe_height_cx
     dec cx
+
     set_top_pipe_drawpos
+    draw_pipe_row PIPE_L_BOTTOM_SPRITE, PIPE_R_BOTTOM_SPRITE
 
-    set_sprite PIPE_L_BOTTOM_SPRITE
-    call draw_sprite_pushed
-    move_drawpos_right
-    set_sprite PIPE_R_BOTTOM_SPRITE
-    call draw_sprite_pushed
-    move_drawpos_left
-
-    draw_top_pipe_row:
-
-    move_drawpos_up
-    set_sprite PIPE_L_SPRITE
-    call draw_sprite_pushed
-    move_drawpos_right
-    set_sprite PIPE_R_SPRITE
-    call draw_sprite_pushed
-    move_drawpos_left
-
-    loop draw_top_pipe_row
+    draw_top_pipe_rows:
+    draw_pipe_row PIPE_L_SPRITE, PIPE_R_SPRITE
+    loop draw_top_pipe_rows
 
     ret
 draw_top_pipe ENDP
+
+; sets the `zero-flag` to false if the pipepair should be culled.
+; expects `dx` to contain the pipe index.
+pipepair_cull_check PROC
+    ; move x drawpos into `ax`
+    set_pipepair_si
+    set_pipepair_x_drawpos
+
+    mov bx, -SP_PIPE_WIDTH ; minimum visible pipe x-pos
+    cmp ax, bx
+    jle not_in_range
+
+    mov bx, SP_SCREEN_WIDTH ; maximum visible pipe x-pos
+    cmp ax, bx
+    jge not_in_range
+
+    jmp in_range
+
+    not_in_range:
+    mov ax, 0
+    mov bx, 1
+    cmp ax, bx
+    ret
+
+    in_range:
+    mov ax, 0
+    cmp ax, ax
+    ret
+pipepair_cull_check ENDP
 
 draw_pipes PROC
     pipepair_loop draw_pipes_loop
 
     push cx
+    call pipepair_cull_check
+    jne skip_pipepair_draw
+
     call draw_bottom_pipe
     call draw_top_pipe
+
+    skip_pipepair_draw:
     pop cx
 
     loop draw_pipes_loop
