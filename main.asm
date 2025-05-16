@@ -1,16 +1,6 @@
 .model small
 .stack 100h
 
-; INFO:
-
-; * uses graphics mode 13h.
-
-; * loads all sprites as one large buffer layed out sprite after sprite,
-;   where each sprite is 16x16.
-;   the sprites are loaded at runtime into a reserved data-segment variable from a binary file.
-
-; * positions are stored in subpixels. subpixel = 1/16 pixels.
-
 ; ***************************************************
 ; ***************************************************
 ; ***************************************************
@@ -23,33 +13,106 @@
 ; ***************************************************
 ; ***************************************************
 
-; DIMENSIONS
+;
+; unit info:
+;
+; `SP` = sub-pixels
+; `P` = pixels
+; `T` = tiles (1 tile is 1 sprite size)
+;
+; time unit is always frames.
+; memory unit is always bytes.
+;
 
-SCREEN_WIDTH equ 320
-SCREEN_HEIGHT equ 200
-
-SPRITE_WIDTH equ 16
-SPRITE_HEIGHT equ 16
-SPRITE_COUNT equ 8 * 8
-SPRITES_BUF_SIZE equ SPRITE_WIDTH * SPRITE_HEIGHT * SPRITE_COUNT
-
-; COLORS
-
-BACKGROUND_COLOR equ 53
+;
+;
+; CONFIGURABLE
+;
+;
 
 ; GAMEPLAY
+SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
+SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 5
+SP_PLAYER_JUMP_VELOCITY equ -20
 
-INITIAL_PLAYER_POSITION_Y equ SCREEN_HEIGHT / 2 * 16
-PLAYER_POSITION_X equ SCREEN_WIDTH / 5 * 16
+PIPEPAIR_COUNT equ 5
+T_PIPEPAIR_XDISTANCE equ 5
+T_PIPEPAIR_YDISTANCE equ 5
+T_MIN_PIPE_HEIGHT equ 3
 
-PLAYER_JUMP_VELOCITY equ -20
+; GRAPHICS
+BACKGROUND_COLOR equ 53
 
+P_SPRITE_SIZE equ 16 ; 16x16
+P_SPRITE_SIZE_LOG2 equ 4
+SPRITE_COUNT equ 256 / P_SPRITE_SIZE
+
+PLAYER_SPRITE        equ 0
+PIPE_L_TOP_SPRITE    equ 1
+PIPE_L_SPRITE        equ 3
+PIPE_L_BOTTOM_SPRITE equ 5
+PIPE_R_TOP_SPRITE    equ 2
+PIPE_R_SPRITE        equ 4
+PIPE_R_BOTTOM_SPRITE equ 6
+
+; GAMELOOP
 END_OF_FRAME_WAIT equ 10
 
-; INPUT
+; UNITS
+PIXELS_TO_SUBPIXELS equ 16
 
+;
+;
+; NON CONFIGURABLE
+;
+;
+
+; GAMEPLAY
+T_MAX_PIPE_HEIGHT equ T_SCREEN_HEIGHT - T_MIN_PIPE_HEIGHT - T_PIPEPAIR_YDISTANCE
+
+; GRAPHICS
+P_SCREEN_WIDTH equ 320
+P_SCREEN_HEIGHT equ 200
+
+SPRITE_BUF_SIZE equ P_SPRITE_SIZE * P_SPRITE_SIZE
+SPRITES_BUF_SIZE equ SPRITE_BUF_SIZE * SPRITE_COUNT
+
+; INPUT
 SPACE_MAKECODE equ 39h
 ESCAPE_MAKECODE equ 01h
+
+; UNITS
+TILES_TO_PIXELS equ P_SPRITE_SIZE
+TILES_TO_SUBPIXELS equ TILES_TO_PIXELS * PIXELS_TO_SUBPIXELS
+
+;
+;
+; INTO TILES
+;
+;
+
+; GRAPHICS
+T_SCREEN_WIDTH  equ P_SCREEN_WIDTH / TILES_TO_PIXELS
+T_SCREEN_HEIGHT  equ P_SCREEN_HEIGHT / TILES_TO_PIXELS
+
+;
+;
+; INTO PIXELS
+;
+;
+
+;
+;
+; INTO SUBPIXELS
+;
+;
+
+; GAMEPLAY
+SP_PIPEPAIR_XDISTANCE equ T_PIPEPAIR_XDISTANCE * TILES_TO_SUBPIXELS
+
+; GRAPHICS
+SP_SCREEN_WIDTH equ P_SCREEN_WIDTH * PIXELS_TO_SUBPIXELS
+SP_SCREEN_HEIGHT equ P_SCREEN_HEIGHT * PIXELS_TO_SUBPIXELS
 
 ; **********************************************
 ; **********************************************
@@ -65,39 +128,21 @@ ESCAPE_MAKECODE equ 01h
 
 .data
 
-;
-;
-;
 ; SPRITES
-;
-;
-;
+    SpritesFileName   db "Sprites.bin"
+    SpritesFileHandle dw ?
 
-    SpritesFileName db "Sprites.bin"
-    SpritesFileHandle     dw ?
+    SpritesBuf db SPRITES_BUF_SIZE dup(?)
 
-    Sprites db SPRITES_BUF_SIZE dup(?) ; reserve memory for sprite palette which has 256 8x8 sprites.
+; GAMELOOP STATE
+    GameLoopUpdateFn dw ? ; changes based on game-state (wait / gameplay).
 
-;
-;
-;
-; STATE
-;
-;
-;
-
-    GameStateUpdate dw offset update_idle_state
-
-;
-;
-;
 ; GAMEPLAY
-;
-;
-;
+    PlayerYPos      dw SP_INITIAL_PLAYER_YPOS
+    PlayerYVelocity dw 0
 
-    PlayerPositionY dw INITIAL_PLAYER_POSITION_Y
-    PlayerVelocityY dw 0
+    PipePairXPoses        dw PIPEPAIR_COUNT dup (?)
+    PipePairBottomHeights dw PIPEPAIR_COUNT dup (?)
 
 ; **********************************************
 ; **********************************************
@@ -117,18 +162,464 @@ ESCAPE_MAKECODE equ 01h
 ;
 ;
 ;
-; INITIALIZATION
+; GRAPHICS
 ;
 ;
 ;
 ;
 
-magic MACRO
-    mov ax, 'a' + 'x'
-    mov bx, 'b' + 'x'
-    mov cx, 'c' + 'x'
-    mov dx, 'd' + 'x'
+; changes `ax`, `bx`, `cx` and `dx`.
+load_sprites PROC
+    ; open file (INT 21h, AH = 3Dh)
+    mov ah, 3Dh            ; open file
+    mov al, 0              ; read-only mode
+    mov dx, offset SpritesFileName
+    int 21h
+    jc load_failed         ; jump if failed
+    mov [SpritesFileHandle], ax   ; store file handle
+
+    ; read file (INT 21h, AH = 3Fh)
+    mov ah, 3Fh            ; read from file
+    mov bx, [SpritesFileHandle]   ; file handle
+    mov cx, 36864          ; number of bytes to read
+    mov dx, offset SpritesBuf
+    int 21h
+    jc load_failed         ; jump if failed
+
+    ; close file (INT 21h, AH = 3Eh)
+    mov ah, 3Eh
+    mov bx, [SpritesFileHandle]
+    int 21h
+
+    ret
+
+    load_failed:
+
+    ret
+load_sprites ENDP
+
+; changes `ax`, `cx`, and `di`.
+clear_screen MACRO
+    mov al, BACKGROUND_COLOR
+    mov ah, BACKGROUND_COLOR
+    mov cx, P_SCREEN_WIDTH * P_SCREEN_HEIGHT / 2
+    mov di, 0
+    rep stosw
 ENDM
+
+move_drawpos_right MACRO
+    add ax, P_SPRITE_SIZE
+ENDM
+move_drawpos_left MACRO
+    sub ax, P_SPRITE_SIZE
+ENDM
+move_drawpos_up MACRO
+    sub bx, P_SPRITE_SIZE
+ENDM
+move_drawpos_down MACRO
+    add bx, P_SPRITE_SIZE
+ENDM
+
+; put x coordinate in `ax` and y coordinate in `bx`.
+; sets `di` to the screen memory offset.
+; changes `ax`, `bx`, `cx`, and `di`.
+set_drawpos_di PROC
+    mov di, bx ; di = y
+    shl di, 6 ; di = y * 64
+
+    mov cx, bx ; cx = y
+    shl cx, 8 ; cx = y * 256
+
+    add di, cx ; di = y * 320 = y * 64 + y * 256
+    
+    add di, ax ; di = y * 320 + x
+
+    ret
+set_drawpos_di ENDP
+
+set_sprite MACRO sprite
+    mov si, offset SpritesBuf + sprite * SPRITE_BUF_SIZE
+ENDM
+
+; draws a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
+; put x coordinate in `ax` and y coordinate in `bx`.
+; put sprite data-segment offset in `si`.
+; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
+draw_sprite PROC
+    call set_drawpos_di
+
+    mov cx, P_SPRITE_SIZE
+
+    draw_row:
+    push cx
+    mov cx, P_SPRITE_SIZE
+    rep movsb
+    add di, P_SCREEN_WIDTH - P_SPRITE_SIZE
+    pop cx
+
+    loop draw_row
+
+    ret
+draw_sprite ENDP
+
+; clears a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
+; put x coordinate in `ax` and y coordinate in `bx`.
+; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
+clear_sprite PROC
+    call set_drawpos_di
+
+    mov cx, P_SPRITE_SIZE
+
+    clear_row:
+    push cx
+    mov cx, P_SPRITE_SIZE / 2
+    mov al, BACKGROUND_COLOR
+    mov ah, BACKGROUND_COLOR
+    rep stosw
+    add di, P_SCREEN_WIDTH - P_SPRITE_SIZE
+    pop cx
+
+    loop clear_row
+
+    ret
+clear_sprite ENDP
+
+; calls draw but pushes and pops the values of `ax`, `bx`, `cx` and `dx`.
+draw_sprite_pushed PROC
+    push ax
+    push bx
+    push cx
+    push dx
+    call draw_sprite
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+
+    ret
+draw_sprite_pushed ENDP
+
+;
+;
+;
+;
+; INPUT
+;
+;
+;
+;
+
+; `eq` flag represents whether or not the key was just triggered.
+; changes `al`.
+detect_key_trigger MACRO makecode
+    in al, 60h
+    cmp al, makecode
+ENDM
+
+;
+;
+;
+;
+; PLAYER
+;
+;
+;
+;
+
+; dont call, use jmp stuff
+on_player_hit_bottom PROC
+    jmp jmp_gameloop_wait
+on_player_hit_bottom ENDP
+
+set_player_drawpos MACRO
+    mov ax, SP_PLAYER_XPOS / 16
+
+    mov bx, PlayerYPos
+    shr bx, 4 ; divide by 16 (subpixels -> pixels)
+    and bx, 0FFFh ; reset overflowed bits
+ENDM
+
+player_jump_check MACRO params
+    detect_key_trigger SPACE_MAKECODE
+    jne skip_jump
+
+    mov PlayerYVelocity, SP_PLAYER_JUMP_VELOCITY
+
+    skip_jump:
+ENDM
+
+update_player_movement PROC
+    ; clear old player sprite
+    set_player_drawpos
+    call clear_sprite
+
+    ; update velocity
+    inc PlayerYVelocity
+    player_jump_check
+
+    ; update pposition
+    mov ax, PlayerYVelocity
+    add PlayerYPos, ax
+
+    ; check if player fell to the bottom of the screen
+    cmp PlayerYPos, (P_SCREEN_HEIGHT - P_SPRITE_SIZE) * 16
+    jae on_player_hit_bottom
+
+    ; draw new player sprite
+    set_player_drawpos
+    set_sprite PLAYER_SPRITE
+    call draw_sprite
+
+    ret
+update_player_movement ENDP
+
+;
+;
+;
+;
+; PIPES
+;
+;
+;
+;
+
+; expects `dx` to contain the pipe index.
+set_pipepair_si MACRO
+    mov si, dx
+    shl si, 1
+ENDM
+
+pipepair_loop MACRO loop_label
+    mov cx, PIPEPAIR_COUNT
+
+    loop_label:
+
+    mov dx, cx
+    dec dx
+ENDM
+
+; expects `dx` to contain the pipe index.
+init_pipepair_x_pos PROC
+    push dx
+
+    mov bx, dx
+    mov ax, SP_PIPEPAIR_XDISTANCE + P_SPRITE_SIZE * 16 * 2
+    mul bx
+    
+    pop dx
+    set_pipepair_si
+    mov [PipePairXPoses + si], ax
+
+    ret
+init_pipepair_x_pos ENDP
+
+; expects `dx` to contain the pipe index.
+; changes `bx`.
+init_pipepair_bottom_height PROC
+    set_pipepair_si
+
+    ; randomize `bx` with unique values
+    add bx, dx
+    add bx, PlayerYVelocity
+    and bx, PlayerYPos
+
+    ; constraint `bx` to `0..16`
+    and bx, 000Fh
+
+    ; scale `bx` to `T_MIN_PIPE_HEIGHT..=T_MAX_PIPE_HEIGHT`
+    mov al, T_MAX_PIPE_HEIGHT - T_MIN_PIPE_HEIGHT
+    mul bl
+    mov bx, ax
+    shr bx, 4
+    and bx, 0FFFh
+    add bx, T_MIN_PIPE_HEIGHT
+
+    mov [PipePairBottomHeights + si], bx
+
+    ret
+init_pipepair_bottom_height ENDP
+
+init_pipepairs PROC
+    pipepair_loop init_pipepairs_loop
+    
+    call init_pipepair_bottom_height
+    call init_pipepair_x_pos
+
+    loop init_pipepairs_loop
+
+    ret
+init_pipepairs ENDP
+
+set_pipepair_x_drawpos MACRO
+    mov ax, [PipePairXPoses + si]
+    shr ax, 4 ; divide by 16 (subpixels -> pixels)
+    and ax, 0FFFh ; reset overflowed bits
+ENDM
+
+; expects `dx` to contain the pipe index.
+; changes `si`.
+set_bottom_pipe_drawpos MACRO
+    set_pipepair_si
+
+    set_pipepair_x_drawpos
+
+    mov bx, P_SCREEN_HEIGHT - P_SPRITE_SIZE
+ENDM
+
+; expects `dx` to contain the pipe index.
+; changes `si`.
+set_top_pipe_drawpos MACRO
+    set_pipepair_si
+    
+    set_pipepair_x_drawpos
+
+    set_pipepair_si
+    mov bx, T_SCREEN_HEIGHT - T_PIPEPAIR_YDISTANCE - 1
+    sub bx, [PipePairBottomHeights + si]
+    shl bx, P_SPRITE_SIZE_LOG2
+ENDM
+
+; expects `dx` to contain the pipe index.
+draw_bottom_pipe PROC
+    set_bottom_pipe_drawpos
+
+    set_pipepair_si
+    mov cx, [PipePairBottomHeights + si]
+    dec cx
+    draw_bottom_pipe_row:
+
+    set_sprite PIPE_L_SPRITE
+    call draw_sprite_pushed
+    move_drawpos_right
+    set_sprite PIPE_R_SPRITE
+    call draw_sprite_pushed
+    move_drawpos_left
+    move_drawpos_up
+
+    loop draw_bottom_pipe_row
+
+    set_sprite PIPE_L_TOP_SPRITE
+    call draw_sprite_pushed
+    move_drawpos_right
+    set_sprite PIPE_R_TOP_SPRITE
+    call draw_sprite_pushed
+
+    ret
+draw_bottom_pipe ENDP
+
+; expects `dx` to contain the pipe index.
+draw_top_pipe PROC
+
+    set_pipepair_si
+    mov ax, [PipePairBottomHeights + si]
+    mov cx, P_SCREEN_HEIGHT / P_SPRITE_SIZE - T_PIPEPAIR_YDISTANCE
+    sub cx, ax
+    dec cx
+    set_top_pipe_drawpos
+
+    set_sprite PIPE_L_BOTTOM_SPRITE
+    call draw_sprite_pushed
+    move_drawpos_right
+    set_sprite PIPE_R_BOTTOM_SPRITE
+    call draw_sprite_pushed
+    move_drawpos_left
+
+    draw_top_pipe_row:
+
+    move_drawpos_up
+    set_sprite PIPE_L_SPRITE
+    call draw_sprite_pushed
+    move_drawpos_right
+    set_sprite PIPE_R_SPRITE
+    call draw_sprite_pushed
+    move_drawpos_left
+
+    loop draw_top_pipe_row
+
+    ret
+draw_top_pipe ENDP
+
+draw_pipes PROC
+    pipepair_loop draw_pipes_loop
+
+    push cx
+    call draw_bottom_pipe
+    call draw_top_pipe
+    pop cx
+
+    loop draw_pipes_loop
+
+    ret
+draw_pipes ENDP
+
+;
+;
+;
+;
+; GAMEPLAY GAME-STATE
+;
+;
+;
+;
+
+; * doesn't return, meant to be used with `jmp` and not `call`.
+jmp_gameloop_gameplay PROC
+    mov GameLoopUpdateFn, offset gameloop_gameplay_update
+
+    jmp main_loop
+jmp_gameloop_gameplay ENDP
+
+gameloop_gameplay_update PROC
+    call update_player_movement
+    call draw_pipes
+
+    ret
+gameloop_gameplay_update ENDP
+
+;
+;
+;
+;
+; WAIT GAME-STATE
+;
+;
+;
+;
+
+; * doesn't return, meant to be used with `jmp` and not `call`.
+jmp_gameloop_wait PROC
+    mov PlayerYPos, SP_INITIAL_PLAYER_YPOS
+    mov PlayerYVelocity, 0
+    
+    call init_pipepairs
+
+    mov GameLoopUpdateFn, offset gameloop_wait_update
+
+    jmp main_loop
+jmp_gameloop_wait ENDP
+
+gameloop_wait_update PROC
+    set_player_drawpos
+    set_sprite PLAYER_SPRITE
+    call draw_sprite
+
+    call draw_pipes
+
+    detect_key_trigger SPACE_MAKECODE
+    je jmp_gameloop_gameplay
+
+    ret
+gameloop_wait_update ENDP
+
+;
+;
+;
+;
+; INITIALIZATION
+;
+;
+;
+;
 
 ; changes `ax`, and `ds`.
 init_ds_as_data_segment MACRO
@@ -147,235 +638,29 @@ init_video_mode MACRO
     mov es, ax           ; Set ES to point to video memory
 ENDM
 
-; changes `ax`, `bx`, `cx` and `dx`.
-load_sprites PROC
-    ; open file (INT 21h, AH = 3Dh)
-    mov ah, 3Dh            ; open file
-    mov al, 0              ; read-only mode
-    mov dx, offset SpritesFileName
-    int 21h
-    jc load_failed         ; jump if failed
-    mov [SpritesFileHandle], ax   ; store file handle
+initialize PROC
+    ; fix a dosbox emulation error by moving random values into these registers.
+    mov ax, 'a' + 'x'
+    mov bx, 'b' + 'x'
+    mov cx, 'c' + 'x'
+    mov dx, 'd' + 'x'
 
-    ; read file (INT 21h, AH = 3Fh)
-    mov ah, 3Fh            ; read from file
-    mov bx, [SpritesFileHandle]   ; file handle
-    mov cx, 36864          ; number of bytes to read
-    mov dx, offset Sprites
-    int 21h
-    jc load_failed         ; jump if failed
+    init_video_mode
+    init_ds_as_data_segment
+    call load_sprites
 
-    ; close file (INT 21h, AH = 3Eh)
-    mov ah, 3Eh
-    mov bx, [SpritesFileHandle]
-    int 21h
+    clear_screen
+
+    call jmp_gameloop_wait
 
     ret
-
-    load_failed:
-
-    ret
-load_sprites ENDP
+initialize ENDP
 
 ;
 ;
 ;
 ;
-; RENDERING
-;
-;
-;
-;
-
-; changes `ax`, `cx`, and `di`.
-clear_screen MACRO
-    mov al, BACKGROUND_COLOR
-    mov ah, BACKGROUND_COLOR
-    mov cx, SCREEN_WIDTH * SCREEN_HEIGHT / 2
-    mov di, 0
-    rep stosw
-ENDM
-
-; put x coordinate in `ax` and y coordinate in `bx`.
-; sets `di` to the screen memory offset.
-; changes `ax`, `bx`, `cx`, and `di`.
-set_di_from_xy_ax_bx PROC
-    mov di, bx ; di = y
-    shl di, 6 ; di = y * 64
-
-    mov cx, bx ; cx = y
-    shl cx, 8 ; cx = y * 256
-
-    add di, cx ; di = y * 320 = y * 64 + y * 256
-    
-    add di, ax ; di = y * 320 + x
-
-    ret
-set_di_from_xy_ax_bx ENDP
-
-; draws a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
-; put x coordinate in `ax` and y coordinate in `bx`.
-; put sprite data-segment offset in `si`.
-; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
-draw_sprite PROC
-    call set_di_from_xy_ax_bx
-
-    mov cx, SPRITE_HEIGHT
-
-    draw_row:
-    push cx
-    mov cx, SPRITE_WIDTH
-    rep movsb
-    add di, SCREEN_WIDTH - SPRITE_WIDTH
-    pop cx
-
-    loop draw_row
-
-    ret
-draw_sprite ENDP
-
-; clears a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
-; put x coordinate in `ax` and y coordinate in `bx`.
-; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
-clear_sprite PROC
-    call set_di_from_xy_ax_bx
-
-    mov cx, SPRITE_HEIGHT
-
-    clear_row:
-    push cx
-    mov cx, SPRITE_WIDTH / 2
-    mov al, BACKGROUND_COLOR
-    mov ah, BACKGROUND_COLOR
-    rep stosw
-    add di, SCREEN_WIDTH - SPRITE_WIDTH
-    pop cx
-
-    loop clear_row
-
-    ret
-clear_sprite ENDP
-
-;
-;
-;
-;
-; INPUT
-;
-;
-;
-;
-
-; `eq` flag represents whever or not the key was just triggered.
-; changes `al`.
-detect_key_trigger MACRO makecode
-    in al, 60h
-    cmp al, makecode
-
-
-ENDM
-
-;
-;
-;
-;
-; ACTIVE GAMEPLAY
-;
-;
-;
-;
-
-; doesn't return, instead jumps to `update_loop`.
-; meant to be jumped to, and not to be called.
-reset_game PROC
-    mov PlayerPositionY, INITIAL_PLAYER_POSITION_Y
-    mov PlayerVelocityY, 0
-
-    mov GameStateUpdate, offset update_idle_state
-
-    jmp update_loop
-reset_game ENDP
-
-apply_player_position MACRO
-    mov ax, PLAYER_POSITION_X / 16
-    mov bx, PlayerPositionY
-    shr bx, 4 ; divide by 16
-    mov bh, 0 ; reset overflowed bits
-ENDM
-
-jump_check MACRO params
-    detect_key_trigger SPACE_MAKECODE
-    jne skip_jump
-
-    mov PlayerVelocityY, PLAYER_JUMP_VELOCITY
-
-    skip_jump:
-ENDM
-
-update_player_movement PROC
-    ; clear old player sprite
-    apply_player_position
-    call clear_sprite
-
-    ; update velocity
-    inc PlayerVelocityY
-    jump_check
-
-    ; update pposition
-    mov ax, PlayerVelocityY
-    add PlayerPositionY, ax
-
-    ; check if player fell to the bottom of the screen
-    cmp PlayerPositionY, (SCREEN_HEIGHT - SPRITE_HEIGHT) * 16
-    jae reset_game
-
-    ; draw new player sprite
-    apply_player_position
-    mov si, offset Sprites
-    call draw_sprite
-
-    ret
-update_player_movement ENDP
-
-update_active_state PROC
-    call update_player_movement
-
-    ret
-update_active_state ENDP
-
-;
-;
-;
-;
-; IDLE GAMEPLAY
-;
-;
-;
-;
-
-update_idle_state PROC
-    apply_player_position
-    mov si, offset Sprites
-    call draw_sprite
-
-    detect_key_trigger SPACE_MAKECODE
-    je activate
-
-    ret
-
-    activate:
-
-    mov GameStateUpdate, offset update_active_state
-
-    ret
-update_idle_state ENDP
-
-
-;
-;
-;
-;
-; GAME LOOP
+; UPDATE
 ;
 ;
 ;
@@ -388,23 +673,8 @@ wait_milliseconds MACRO milliseconds
     int 15h
 ENDM
 
-;
-
-initialize PROC
-    magic
-    init_video_mode
-    init_ds_as_data_segment
-    call load_sprites
-
-    clear_screen
-
-    ret
-initialize ENDP
-
-;
-
 update PROC
-    mov ax, GameStateUpdate
+    mov ax, GameLoopUpdateFn
     call ax
 
     wait_milliseconds END_OF_FRAME_WAIT
@@ -412,6 +682,14 @@ update PROC
     ret
 update ENDP
 
+;
+;
+;
+;
+; CLEAN UP
+;
+;
+;
 ;
 
 clean_up PROC
@@ -448,11 +726,11 @@ clean_up ENDP
 main PROC
     call initialize
 
-    update_loop:
+    main_loop:
     call update
 
     detect_key_trigger ESCAPE_MAKECODE
-    jne update_loop ; repeat update if escape wasn't pressed
+    jne main_loop ; repeat update if escape wasn't pressed
 
     call clean_up
 main ENDP
