@@ -40,6 +40,8 @@ T_PIPE_WIDTH equ 2
 T_PIPEPAIR_XDISTANCE equ 5
 T_PIPEPAIR_YDISTANCE equ 5
 T_MIN_PIPE_HEIGHT equ 3
+SP_PIPE_VELOCITY equ -10
+P_PIPE_CLEAR_OFFSET equ 8
 
 ; GRAPHICS
 BACKGROUND_COLOR equ 53
@@ -74,6 +76,7 @@ T_MAX_PIPE_HEIGHT equ T_SCREEN_HEIGHT - T_MIN_PIPE_HEIGHT - T_PIPEPAIR_YDISTANCE
 ; GRAPHICS
 P_SCREEN_WIDTH equ 320
 P_SCREEN_HEIGHT equ 200
+P_SCREEN_AREA equ P_SCREEN_WIDTH * P_SCREEN_HEIGHT
 
 SPRITE_BUF_SIZE equ P_SPRITE_SIZE * P_SPRITE_SIZE
 SPRITES_BUF_SIZE equ SPRITE_BUF_SIZE * SPRITE_COUNT
@@ -200,13 +203,104 @@ set_max_cx ENDP
 ;
 ;
 ;
-; GRAPHICS
-;
+; GRAPHICS (HELPERS)
+; 
 ;
 ;
 ;
 
-; changes `ax`, `bx`, `cx` and `dx`.
+; input:
+; `ax` -> x coordinate,
+; `bx` -> y coordinate.
+;
+; effects:
+; `di` -> ptr to screen coordinate.
+set_drawpos_di PROC
+    push cx
+
+    mov di, bx ; di = y
+    shl di, 6 ; di = y * 64
+
+    mov cx, bx ; cx = y
+    shl cx, 8 ; cx = y * 256
+
+    add di, cx ; di = y * 320 = y * 64 + y * 256
+    
+    add di, ax ; di = y * 320 + x
+
+    pop cx
+    ret
+set_drawpos_di ENDP
+
+; input:
+; `ax` -> width,
+; `bx` -> height.
+; `si` -> sprite src-pos.
+; `di` -> sprite dst-pos.
+draw_sprite_row MACRO
+    push cx
+    mov cx, ax
+    rep movsb
+    pop cx
+
+    add si, P_SPRITE_SIZE
+    add di, P_SCREEN_WIDTH
+    sub di, ax
+ENDM
+
+; input:
+; `ax` -> width,
+; `bx` -> height.
+; `di` -> sprite dst-pos.
+clear_sprite_row MACRO
+    push cx
+    push ax
+    mov cx, ax
+    mov ax, BACKGROUND_COLOR
+    rep stosb
+    pop ax
+    pop cx
+
+    add di, P_SCREEN_WIDTH
+    sub di, ax
+ENDM
+
+; clips the sprite rect, removing offscreen parts.
+;
+; input:
+; `ax` -> x,
+; `bx` -> y.
+;
+; effects:
+; `ax` -> new x,
+; `bx` -> new y,
+; `cx` -> new width,
+; `dx` -> new height.
+clip_sprite PROC
+    ; unfinished ignore this right now
+
+    mov cx, P_SPRITE_SIZE
+    mov dx, P_SPRITE_SIZE
+
+    ret
+clip_sprite ENDP
+
+;
+;
+;
+;
+; GRAPHICS
+; 
+;
+;
+;
+
+; effects:
+; `SpritesBuf` -> init,
+; `ax` -> ?,
+; `bx` -> ?,
+; `cx` -> ?,
+; `dx` -> ?,
 load_sprites PROC
     ; open file (INT 21h, AH = 3Dh)
     mov ah, 3Dh            ; open file
@@ -236,125 +330,125 @@ load_sprites PROC
     ret
 load_sprites ENDP
 
-; changes `ax`, `cx`, and `di`.
-clear_screen MACRO
-    mov al, BACKGROUND_COLOR
-    mov ah, BACKGROUND_COLOR
-    mov cx, P_SCREEN_WIDTH * P_SCREEN_HEIGHT / 2
+; effects:
+; `ax` -> ?,
+; `cx` -> ?,
+; `di` -> ?.
+clear_screen MACRO color
+    mov al, color
+    mov ah, color
+    mov cx, P_SCREEN_AREA / 2
     mov di, 0
     rep stosw
 ENDM
 
-move_drawpos_right MACRO
-    add ax, P_SPRITE_SIZE
-ENDM
-move_drawpos_left MACRO
-    sub ax, P_SPRITE_SIZE
-ENDM
-move_drawpos_up MACRO
-    sub bx, P_SPRITE_SIZE
-ENDM
-move_drawpos_down MACRO
-    add bx, P_SPRITE_SIZE
+; affects the drawpos which is stored using `ax` as X and `bx` as Y.
+set_drawpos_x MACRO x
+    mov ax, x
 ENDM
 
-; put x coordinate in `ax` and y coordinate in `bx`.
-; sets `di` to the screen memory offset.
-; changes `ax`, `bx`, `cx`, and `di`.
-set_drawpos_di PROC
-    mov di, bx ; di = y
-    shl di, 6 ; di = y * 64
+; affects the drawpos which is stored using `ax` as X and `bx` as Y.
+set_drawpos_y MACRO y
+    mov bx, y
+ENDM
 
-    mov cx, bx ; cx = y
-    shl cx, 8 ; cx = y * 256
+; affects the drawpos which is stored using `ax` as X and `bx` as Y.
+move_drawpos_right MACRO amount
+    add ax, amount
+ENDM
 
-    add di, cx ; di = y * 320 = y * 64 + y * 256
-    
-    add di, ax ; di = y * 320 + x
+; affects the drawpos which is stored using `ax` as X and `bx` as Y.
+move_drawpos_left MACRO amount
+    sub ax, amount
+ENDM
 
-    ret
-set_drawpos_di ENDP
+; affects the drawpos which is stored using `ax` as X and `bx` as Y.
+move_drawpos_up MACRO amount
+    sub bx, amount
+ENDM
 
+; affects the drawpos which is stored using `ax` as X and `bx` as Y.
+move_drawpos_down MACRO amount
+    add bx, amount
+ENDM
+
+; sets the sprite for the next `draw_sprite` (is stored in `si`).
 set_sprite MACRO sprite
     mov si, offset SpritesBuf + sprite * SPRITE_BUF_SIZE
 ENDM
 
-draw_sprite_row MACRO
-    push cx
-
-    ; set `cx` to column count
-    mov cx, P_SPRITE_SIZE
-    mov dx, P_SCREEN_WIDTH
-    sub dx, ax ; dx is now `P_SCREEN_WIDTH - X_POS`
-    call set_min_cx ; don't draw out of bounds columns
-
-    push cx
-    rep movsb
-    pop cx
-
-    add si, P_SPRITE_SIZE
-    sub si, cx
-    add di, P_SCREEN_WIDTH
-    sub di, cx
-
-    pop cx
-ENDM
-
-; draws a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
-; put x coordinate in `ax` and y coordinate in `bx`.
-; put sprite data-segment offset in `si`.
-; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
+; draws a sprite with a configurable position and an unconfigurable size.
+;
+; input:
+; `ax` x (use `set_drawpos_x`),
+; `bx` y (use `set_drawpos_y`),
+; `si` sprite ptr (use `set_sprite`).
+;
+; effects:
+; `ax` -> ?,
+; `bx` -> ?,
+; `cx` -> ?,
+; `dx` -> ?,
+; `si` -> ?,
+; `di` -> ?.
 draw_sprite PROC
+    call clip_sprite
     call set_drawpos_di
+    mov ax, cx
+    mov bx, dx
 
-    ; x culling
-    mov cx, P_SPRITE_SIZE
-    mov dx, P_SCREEN_WIDTH
-    sub dx, ax ; dx is now `P_SCREEN_WIDTH - X_POS`
-    call set_min_cx ; don't draw out of bounds columns
-    cmp cx, 0
-    jle skip_sprite_draw
+    ; when calling this proc `ax` and `bx` store the drawpos which is now unused.
+    ; from this point they hold the drawsize which is affected by clipping.
 
-    ; y culling & set `cx` to row count
-    mov cx, P_SPRITE_SIZE
-    mov dx, P_SCREEN_HEIGHT
-    sub dx, bx ; dx is now `P_SCREEN_HEIGHT - Y_POS`
-    call set_min_cx ; don't draw out of bounds rows
-    cmp cx, 0
-    jle skip_sprite_draw
-
-    draw_row:
+    mov cx, bx
+    draw_sprite_loop:
     draw_sprite_row
-    loop draw_row
-
-    skip_sprite_draw:
+    loop draw_sprite_loop
 
     ret
 draw_sprite ENDP
 
-; clears a sprite with the constant size of `SPRITE_WIDTH` and `SPRITE_HEIGHT`.
-; put x coordinate in `ax` and y coordinate in `bx`.
-; changes `ax`, `bx`, `cx`, `dx`, `si`, and `di`.
+; clears a sprite with a configurable position and an unconfigurable size to `BACKGROUND_COLOR`.
+;
+; input:
+; `ax` x (use `set_drawpos_x`),
+; `bx` y (use `set_drawpos_y`),
+;
+; effects:
+; `ax` -> ?,
+; `bx` -> ?,
+; `cx` -> ?,
+; `dx` -> ?,
+; `di` -> ?.
 clear_sprite PROC
+    call clip_sprite
     call set_drawpos_di
+    mov ax, cx
+    mov bx, dx
 
-    mov cx, P_SPRITE_SIZE
+    ; when calling this proc `ax` and `bx` store the drawpos which is now unused.
+    ; from this point they hold the drawsize which is affected by clipping.
 
-    clear_row:
-    push cx
-    mov cx, P_SPRITE_SIZE / 2
-    mov al, BACKGROUND_COLOR
-    mov ah, BACKGROUND_COLOR
-    rep stosw
-    add di, P_SCREEN_WIDTH - P_SPRITE_SIZE
-    pop cx
-
-    loop clear_row
+    mov cx, bx
+    clear_sprite_loop:
+    clear_sprite_row
+    loop clear_sprite_loop
 
     ret
 clear_sprite ENDP
 
-; calls draw but pushes and pops the values of `ax`, `bx`, `cx` and `dx`.
+; variation of `draw_sprite` that leaves more registers unchanged.
+;
+; draws a sprite with a configurable position and an unconfigurable size.
+;
+; input:
+; `ax` x (use `set_drawpos_x`),
+; `bx` y (use `set_drawpos_y`),
+; `si` sprite ptr (use `set_sprite`).
+;
+; effects:
+; `si` -> ?,
+; `di` -> ?.
 draw_sprite_pushed PROC
     push ax
     push bx
@@ -368,6 +462,30 @@ draw_sprite_pushed PROC
 
     ret
 draw_sprite_pushed ENDP
+
+; variation of `clear_sprite` that leaves more registers unchanged.
+;
+; clears a sprite with a configurable position and an unconfigurable size to `BACKGROUND_COLOR`.
+;
+; input:
+; `ax` x (use `set_drawpos_x`),
+; `bx` y (use `set_drawpos_y`),
+;
+; effects:
+; `di` -> ?.
+clear_sprite_pushed PROC
+    push ax
+    push bx
+    push cx
+    push dx
+    call clear_sprite
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+
+    ret
+clear_sprite_pushed ENDP
 
 ;
 ;
@@ -418,7 +536,7 @@ player_jump_check MACRO params
     skip_jump:
 ENDM
 
-update_player_movement PROC
+update_player PROC
     ; clear old player sprite
     set_player_drawpos
     call clear_sprite
@@ -441,7 +559,7 @@ update_player_movement PROC
     call draw_sprite
 
     ret
-update_player_movement ENDP
+update_player ENDP
 
 ;
 ;
@@ -548,18 +666,27 @@ set_top_pipe_drawpos MACRO
     shl bx, P_SPRITE_SIZE_LOG2
 ENDM
 
+; draws and clears in proportion to the pipe speed.
+;
 ; expects `dx` to contain the pipe index.
+; expects `ax` and `bx` to contain the drawpos.
 draw_pipe_row MACRO left_sprite, right_sprite
     set_sprite left_sprite
+    move_drawpos_right P_PIPE_CLEAR_OFFSET
+    call clear_sprite_pushed
+    move_drawpos_left P_PIPE_CLEAR_OFFSET
     call draw_sprite_pushed
 
-    move_drawpos_right
+    move_drawpos_right P_SPRITE_SIZE
 
     set_sprite right_sprite
+    move_drawpos_right P_PIPE_CLEAR_OFFSET
+    call clear_sprite_pushed
+    move_drawpos_left P_PIPE_CLEAR_OFFSET
     call draw_sprite_pushed
 
-    move_drawpos_left
-    move_drawpos_up
+    move_drawpos_left P_SPRITE_SIZE
+    move_drawpos_up P_SPRITE_SIZE
 ENDM
 
 ; expects `dx` to contain the pipe index.
@@ -576,6 +703,8 @@ set_top_pipe_height_cx MACRO
     sub cx, ax
 ENDM
 
+; draws and clears in proportion to the pipe speed.
+;
 ; expects `dx` to contain the pipe index.
 draw_bottom_pipe PROC
     set_bottom_pipe_drawpos
@@ -591,6 +720,8 @@ draw_bottom_pipe PROC
     ret
 draw_bottom_pipe ENDP
 
+; draws and clears in proportion to the pipe speed.
+;
 ; expects `dx` to contain the pipe index.
 draw_top_pipe PROC
     set_top_pipe_height_cx
@@ -606,6 +737,7 @@ draw_top_pipe PROC
     ret
 draw_top_pipe ENDP
 
+; draws and clears in proportion to the pipe speed.
 draw_pipes PROC
     pipepair_loop draw_pipes_loop
 
@@ -618,6 +750,15 @@ draw_pipes PROC
 
     ret
 draw_pipes ENDP
+
+update_pipes PROC
+    pipepair_loop update_pipes_loop
+    set_pipepair_si
+    add [PipePairXPoses + si], SP_PIPE_VELOCITY
+    loop update_pipes_loop
+
+    call draw_pipes
+update_pipes ENDP
 
 ;
 ;
@@ -637,8 +778,8 @@ jmp_gameloop_gameplay PROC
 jmp_gameloop_gameplay ENDP
 
 gameloop_gameplay_update PROC
-    call update_player_movement
-    call draw_pipes
+    call update_player
+    call update_pipes
 
     ret
 gameloop_gameplay_update ENDP
@@ -716,9 +857,9 @@ initialize PROC
     init_ds_as_data_segment
     call load_sprites
 
-    clear_screen
+    clear_screen BACKGROUND_COLOR
 
-    call jmp_gameloop_wait
+    call gameloop_gameplay_update;jmp_gameloop_wait
 
     ret
 initialize ENDP
