@@ -41,7 +41,7 @@ T_PIPEPAIR_XDISTANCE equ 5
 T_PIPEPAIR_YDISTANCE equ 5
 T_MIN_PIPE_HEIGHT equ 3
 SP_PIPE_VELOCITY equ -10
-P_PIPE_CLEAR_OFFSET equ 8
+P_PIPE_CLEAR_OFFSET equ 1
 
 ; GRAPHICS
 BACKGROUND_COLOR equ 53
@@ -163,10 +163,16 @@ SP_SCREEN_HEIGHT equ P_SCREEN_HEIGHT * PIXELS_TO_SUBPIXELS
 
 .code
 
-smart_loop MACRO label_
-    dec cx
+loop_start MACRO label_, end_label
+    label_:
     cmp cx, 0
-    jg label_
+    jle end_label
+ENDM
+
+loop_end MACRO label_, end_label
+    dec cx
+    jmp label_
+    end_label:
 ENDM
 
 ;
@@ -244,13 +250,22 @@ set_drawpos_di ENDP
 ; `si` -> sprite src-pos.
 ; `di` -> sprite dst-pos.
 draw_sprite_row MACRO
+    cmp ax, 0
+    jle post_draw_sprite_row
+
     push cx
     mov cx, ax
     rep movsb
     pop cx
 
-    sub di, ax ; revert the `di` progression caused by `movsb`
+    ; revert `si` and `di` progression caused by `movsb`
+    sub si, ax
+    sub di, ax
+
+    add si, P_SPRITE_SIZE
     add di, P_SCREEN_WIDTH
+
+    post_draw_sprite_row:
 ENDM
 
 ; input:
@@ -258,6 +273,9 @@ ENDM
 ; `bx` -> height.
 ; `di` -> sprite dst-pos.
 clear_sprite_row MACRO
+    cmp ax, 0
+    jle post_clear_sprite_row
+
     push cx
     push ax
     mov cx, ax
@@ -268,6 +286,8 @@ clear_sprite_row MACRO
 
     sub di, ax ; revert the `di` progression caused by `stosb`
     add di, P_SCREEN_WIDTH
+
+    post_clear_sprite_row:
 ENDM
 
 ; clips the sprite rect, removing offscreen parts.
@@ -383,12 +403,12 @@ clear_screen MACRO color
 ENDM
 
 ; affects the drawpos which is stored using `ax` as X and `bx` as Y.
-set_drawpos_x MACRO x
+set_xdrawpos MACRO x
     mov ax, x
 ENDM
 
 ; affects the drawpos which is stored using `ax` as X and `bx` as Y.
-set_drawpos_y MACRO y
+set_ydrawpos MACRO y
     mov bx, y
 ENDM
 
@@ -420,8 +440,8 @@ ENDM
 ; draws a sprite with a configurable position and an unconfigurable size.
 ;
 ; input:
-; `ax` x (use `set_drawpos_x`),
-; `bx` y (use `set_drawpos_y`),
+; `ax` x (use `set_xdrawpos`),
+; `bx` y (use `set_ydrawpos`),
 ; `si` sprite ptr (use `set_sprite`).
 ;
 ; effects:
@@ -442,9 +462,9 @@ draw_sprite PROC
     ; moving the drawsize to `ax` and `bx` leaves `cx` and `dx` unused for `draw_sprite_row`.
 
     mov cx, bx
-    draw_sprite_loop:
+    loop_start draw_sprite_loop, draw_sprite_loop_end
     draw_sprite_row
-    smart_loop draw_sprite_loop
+    loop_end draw_sprite_loop, draw_sprite_loop_end
 
     ret
 draw_sprite ENDP
@@ -452,8 +472,8 @@ draw_sprite ENDP
 ; clears a sprite with a configurable position and an unconfigurable size to `BACKGROUND_COLOR`.
 ;
 ; input:
-; `ax` x (use `set_drawpos_x`),
-; `bx` y (use `set_drawpos_y`),
+; `ax` x (use `set_xdrawpos`),
+; `bx` y (use `set_ydrawpos`),
 ;
 ; effects:
 ; `ax` -> ?,
@@ -473,9 +493,9 @@ clear_sprite PROC
     ; moving the drawsize to `ax` and `bx` leaves `cx` and `dx` unused for `clear_sprite_row`.
 
     mov cx, bx
-    clear_sprite_loop:
+    loop_start clear_sprite_loop, clear_sprite_loop_end
     clear_sprite_row
-    smart_loop clear_sprite_loop
+    loop_end clear_sprite_loop, clear_sprite_loop_end
 
     ret
 clear_sprite ENDP
@@ -485,8 +505,8 @@ clear_sprite ENDP
 ; draws a sprite with a configurable position and an unconfigurable size.
 ;
 ; input:
-; `ax` x (use `set_drawpos_x`),
-; `bx` y (use `set_drawpos_y`),
+; `ax` x (use `set_xdrawpos`),
+; `bx` y (use `set_ydrawpos`),
 ; `si` sprite ptr (use `set_sprite`).
 ;
 ; effects:
@@ -512,8 +532,8 @@ draw_sprite_pushed ENDP
 ; clears a sprite with a configurable position and an unconfigurable size to `BACKGROUND_COLOR`.
 ;
 ; input:
-; `ax` x (use `set_drawpos_x`),
-; `bx` y (use `set_drawpos_y`),
+; `ax` x (use `set_xdrawpos`),
+; `bx` y (use `set_ydrawpos`),
 ;
 ; effects:
 ; `di` -> ?.
@@ -570,7 +590,6 @@ set_player_drawpos MACRO
 
     mov bx, PlayerYPos
     shr bx, 4 ; divide by 16 (subpixels -> pixels)
-    and bx, 0FFFh ; reset overflowed bits
 ENDM
 
 player_jump_check MACRO params
@@ -611,18 +630,18 @@ update_player ENDP
 ;
 ;
 ;
-; PIPES
+; PIPES (HELPERS)
 ;
 ;
 ;
 ;
 
-; expects `dx` to contain the pipe index.
-set_pipepair_si MACRO
-    mov si, dx
-    shl si, 1
-ENDM
-
+; declares a loop label that runs `PIPEPAIR_COUNT` times and sets up `dx` as the pipe index.
+;
+; * don't modify `cx` inside the loop.
+;
+; input:
+; none.
 pipepair_loop MACRO loop_label
     mov cx, PIPEPAIR_COUNT
 
@@ -632,30 +651,44 @@ pipepair_loop MACRO loop_label
     dec dx
 ENDM
 
-; expects `dx` to contain the pipe index.
-init_pipepair_x_pos PROC
-    push dx
+; input:
+; `dx` -> pipepair index.
+set_pipepair_si MACRO
+    mov si, dx
+    shl si, 1
+ENDM
 
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> ?,
+; `bx` -> ?.
+init_pipepair_xpos PROC
+    push dx
     mov bx, dx
     mov ax, SP_PIPEPAIR_XDISTANCE + SP_PIPE_WIDTH
     mul bx
-    
     pop dx
-    set_pipepair_si
+
     mov [PipePairXPoses + si], ax
 
     ret
-init_pipepair_x_pos ENDP
+init_pipepair_xpos ENDP
 
-; expects `dx` to contain the pipe index.
-; changes `bx`.
-init_pipepair_bottom_height PROC
-    set_pipepair_si
-
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> ?,
+; `bx` -> ?.
+init_pipepair_ypos PROC
     ; randomize `bx` with unique values
     add bx, dx
     add bx, PlayerYVelocity
-    and bx, PlayerYPos
+    xor bx, PlayerYPos
 
     ; constraint `bx` to `0..16`
     and bx, 000Fh
@@ -671,52 +704,81 @@ init_pipepair_bottom_height PROC
     mov [PipePairBottomHeights + si], bx
 
     ret
-init_pipepair_bottom_height ENDP
+init_pipepair_ypos ENDP
 
-init_pipepairs PROC
-    pipepair_loop init_pipepairs_loop
-    
-    call init_pipepair_bottom_height
-    call init_pipepair_x_pos
-
-    smart_loop init_pipepairs_loop
-
-    ret
-init_pipepairs ENDP
-
-set_pipepair_x_drawpos MACRO
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> x-drawpos.
+set_pipepair_xdrawpos MACRO
     mov ax, [PipePairXPoses + si]
-    shr ax, 4 ; divide by 16 (subpixels -> pixels)
-    and ax, 0FFFh ; reset overflowed bits
+    sar ax, 4 ; divide by 16 (subpixels -> pixels)
 ENDM
 
-; expects `dx` to contain the pipe index.
-; changes `si`.
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> x-drawpos,
+; `bx` -> y-drawpos.
 set_bottom_pipe_drawpos MACRO
-    set_pipepair_si
-
-    set_pipepair_x_drawpos
+    set_pipepair_xdrawpos
 
     mov bx, P_SCREEN_HEIGHT - P_SPRITE_SIZE
 ENDM
 
-; expects `dx` to contain the pipe index.
-; changes `si`.
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> x-drawpos,
+; `bx` -> y-drawpos.
 set_top_pipe_drawpos MACRO
-    set_pipepair_si
-    
-    set_pipepair_x_drawpos
+    set_pipepair_xdrawpos
 
     mov bx, T_SCREEN_HEIGHT - T_PIPEPAIR_YDISTANCE - 1
     sub bx, [PipePairBottomHeights + si]
     shl bx, P_SPRITE_SIZE_LOG2
 ENDM
 
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `cx` -> bottom pipe height.
+set_bottom_pipe_height_cx MACRO params
+    mov cx, [PipePairBottomHeights + si]
+ENDM
+
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> ?,
+; `cx` -> top pipe height.
+set_top_pipe_height_cx MACRO
+    mov cx, P_SCREEN_HEIGHT / P_SPRITE_SIZE - T_PIPEPAIR_YDISTANCE
+    mov ax, [PipePairBottomHeights + si]
+    sub cx, ax
+ENDM
+
 ; draws and clears in proportion to the pipe speed.
 ;
-; expects `dx` to contain the pipe index.
-; expects `ax` and `bx` to contain the drawpos.
+; input:
+; a set-up drawpos.
+;
+; effects:
+; `bx` -> moved 1 tile up,
+; `di` -> ?.
 draw_pipe_row MACRO left_sprite, right_sprite
+    push si
+
     set_sprite left_sprite
     move_drawpos_right P_PIPE_CLEAR_OFFSET
     call clear_sprite_pushed
@@ -733,33 +795,29 @@ draw_pipe_row MACRO left_sprite, right_sprite
 
     move_drawpos_left P_SPRITE_SIZE
     move_drawpos_up P_SPRITE_SIZE
-ENDM
 
-; expects `dx` to contain the pipe index.
-set_bottom_pipe_height_cx MACRO params
-    set_pipepair_si
-    mov cx, [PipePairBottomHeights + si]
-ENDM
-
-; expects `dx` to contain the pipe index.
-set_top_pipe_height_cx MACRO
-    set_pipepair_si
-    mov ax, [PipePairBottomHeights + si]
-    mov cx, P_SCREEN_HEIGHT / P_SPRITE_SIZE - T_PIPEPAIR_YDISTANCE
-    sub cx, ax
+    pop si
 ENDM
 
 ; draws and clears in proportion to the pipe speed.
 ;
-; expects `dx` to contain the pipe index.
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> ?,
+; `bx` -> ?,
+; `cx` -> ?,
+; `di` -> ?.
 draw_bottom_pipe PROC
     set_bottom_pipe_drawpos
 
     set_bottom_pipe_height_cx
     dec cx
-    draw_bottom_pipe_rows:
+    loop_start draw_bottom_pipe_loop, draw_bottom_pipe_loop_end
     draw_pipe_row PIPE_L_SPRITE, PIPE_R_SPRITE
-    smart_loop draw_bottom_pipe_rows
+    loop_end draw_bottom_pipe_loop, draw_bottom_pipe_loop_end
 
     draw_pipe_row PIPE_L_TOP_SPRITE, PIPE_R_TOP_SPRITE
 
@@ -768,7 +826,15 @@ draw_bottom_pipe ENDP
 
 ; draws and clears in proportion to the pipe speed.
 ;
-; expects `dx` to contain the pipe index.
+; input:
+; `dx` -> pipepair index,
+; `si` -> pipepair ptr.
+;
+; effects:
+; `ax` -> ?,
+; `bx` -> ?,
+; `cx` -> ?,
+; `di` -> ?.
 draw_top_pipe PROC
     set_top_pipe_height_cx
     dec cx
@@ -776,34 +842,80 @@ draw_top_pipe PROC
     set_top_pipe_drawpos
     draw_pipe_row PIPE_L_BOTTOM_SPRITE, PIPE_R_BOTTOM_SPRITE
 
-    draw_top_pipe_rows:
+    mov cx, 4
+    loop_start draw_top_pipe_loop, draw_top_pipe_loop_end
     draw_pipe_row PIPE_L_SPRITE, PIPE_R_SPRITE
-    smart_loop draw_top_pipe_rows
+    loop_end draw_top_pipe_loop, draw_top_pipe_loop_end
 
     ret
 draw_top_pipe ENDP
 
+;
+;
+;
+;
+; PIPES
+;
+;
+;
+;
+
+; effects:
+; `ax` -> ?,
+; `bx` -> ?,
+; `dx` -> ?,
+; `si` -> ?.
+init_pipepairs PROC
+    pipepair_loop init_pipepairs_loop
+
+    set_pipepair_si
+    call init_pipepair_ypos
+    call init_pipepair_xpos
+
+    loop init_pipepairs_loop
+
+    ret
+init_pipepairs ENDP
+
 ; draws and clears in proportion to the pipe speed.
+;
+; effects:
+; `ax` -> ?,
+; `bx` -> ?,
+; `cx` -> ?,
+; `dx` -> ?,
+; `si` -> ?,
+; `di` -> ?.
 draw_pipes PROC
     pipepair_loop draw_pipes_loop
 
     push cx
-    call draw_bottom_pipe
+    set_pipepair_si
     call draw_top_pipe
+    call draw_bottom_pipe
     pop cx
 
-    smart_loop draw_pipes_loop
+    loop draw_pipes_loop
 
     ret
 draw_pipes ENDP
 
+; effects:
+; `ax` -> ?,
+; `bx` -> ?,
+; `cx` -> ?,
+; `dx` -> ?,
+; `si` -> ?,
+; `di` -> ?.
 update_pipes PROC
     pipepair_loop update_pipes_loop
     set_pipepair_si
     add [PipePairXPoses + si], SP_PIPE_VELOCITY
-    smart_loop update_pipes_loop
+    loop update_pipes_loop
 
     call draw_pipes
+
+    ret
 update_pipes ENDP
 
 ;
