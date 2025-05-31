@@ -35,7 +35,7 @@ END_OF_FRAME_WAIT equ 10
 
 SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
 SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 7
-SP_PLAYER_JUMP_VELOCITY equ -50
+SP_PLAYER_JUMP_VELOCITY equ -40
 SP_PLAYER_GRAVITY_SCALE equ 6
 
 PIPEPAIR_COUNT equ 4
@@ -179,42 +179,6 @@ ENDM
 ;
 ;
 ;
-; MATH
-;
-;
-;
-;
-
-; sets `cx` to the signed minimum of `cx` and `dx`
-set_min_cx PROC
-    cmp cx, dx
-    jg min_pick_dx
-
-    min_pick_cx:
-    ret
-
-    min_pick_dx:
-    mov cx, dx
-    ret
-set_min_cx ENDP
-
-; sets `cx` to the signed maximum of `cx` and `dx`
-set_max_cx PROC
-    cmp cx, dx
-    jl max_pick_dx
-
-    max_pick_cx:
-    ret
-
-    max_pick_dx:
-    mov cx, dx
-    ret
-set_max_cx ENDP
-
-;
-;
-;
-;
 ; GRAPHICS (HELPERS)
 ; 
 ;
@@ -227,7 +191,7 @@ set_max_cx ENDP
 ;
 ; effects:
 ; `di` -> ptr to screen coordinate.
-set_drawpos_di PROC
+set_draw_di PROC
     push cx
 
     mov di, bx ; di = y
@@ -242,7 +206,7 @@ set_drawpos_di PROC
 
     pop cx
     ret
-set_drawpos_di ENDP
+set_draw_di ENDP
 
 ; input:
 ; `ax` -> width,
@@ -399,13 +363,13 @@ clear_screen MACRO color
     rep stosw
 ENDM
 
-; affects the drawpos which is stored using `ax` as X and `bx` as Y.
-set_xdrawpos MACRO x
+; affects the draw x which is stored in `ax`.
+set_draw_x MACRO x
     mov ax, x
 ENDM
 
-; affects the drawpos which is stored using `ax` as X and `bx` as Y.
-set_ydrawpos MACRO y
+; affects the draw y which is stored in `bx`.
+set_draw_y MACRO y
     mov bx, y
 ENDM
 
@@ -420,12 +384,12 @@ set_draw_height MACRO height
 ENDM
 
 ; affects the drawpos which is stored using `ax` as X and `bx` as Y.
-move_drawpos_right MACRO amount
+move_draw_right MACRO amount
     add ax, amount
 ENDM
 
 ; affects the drawpos which is stored using `ax` as X and `bx` as Y.
-move_drawpos_left MACRO amount
+move_draw_left MACRO amount
     sub ax, amount
 ENDM
 
@@ -435,23 +399,23 @@ move_drawpos_up MACRO amount
 ENDM
 
 ; affects the drawpos which is stored using `ax` as X and `bx` as Y.
-move_drawpos_down MACRO amount
+move_draw_down MACRO amount
     add bx, amount
 ENDM
 
 ; sets the sprite for the next `draw_sprite` (is stored in `si`).
-set_sprite MACRO sprite
+set_draw_sprite MACRO sprite
     mov si, offset SpritesBuf + sprite * SPRITE_BUF_SIZE
 ENDM
 
 ; draws a sprite with a configurable rect.
 ;
 ; input:
-; `ax` -> x (use `set_xdrawpos`),
-; `bx` -> y (use `set_ydrawpos`),
+; `ax` -> x (use `set_draw_x`),
+; `bx` -> y (use `set_draw_y`),
 ; `cx` -> width (use `set_draw_width`),
 ; `dx` -> height (use `set_draw_height`),
-; `si` -> sprite ptr (use `set_sprite`).
+; `si` -> sprite ptr (use `set_draw_sprite`).
 ;
 ; effects:
 ; `ax` -> ?,
@@ -462,7 +426,7 @@ ENDM
 ; `di` -> ?.
 draw_sprite PROC
     call clip_draw_rect
-    call set_drawpos_di
+    call set_draw_di
     mov ax, cx
     mov bx, dx
 
@@ -481,8 +445,8 @@ draw_sprite ENDP
 ; clears a configurable rect.
 ;
 ; input:
-; `ax` -> x (use `set_xdrawpos`),
-; `bx` -> y (use `set_ydrawpos`),
+; `ax` -> x (use `set_draw_x`),
+; `bx` -> y (use `set_draw_y`),
 ; `cx` -> width (use `set_draw_width`),
 ; `dx` -> height (use `set_draw_height`).
 ;
@@ -495,7 +459,7 @@ draw_sprite ENDP
 ; `di` -> ?.
 clear_rect PROC
     call clip_draw_rect
-    call set_drawpos_di
+    call set_draw_di
     mov ax, cx
     mov bx, dx
 
@@ -514,9 +478,9 @@ clear_rect ENDP
 ; variation of `draw_sprite` that leaves more registers unchanged and requires a constant size.
 ;
 ; input:
-; `ax` x (use `set_xdrawpos`),
-; `bx` y (use `set_ydrawpos`),
-; `si` sprite ptr (use `set_sprite`).
+; `ax` x (use `set_draw_x`),
+; `bx` y (use `set_draw_y`),
+; `si` sprite ptr (use `set_draw_sprite`).
 ;
 ; effects:
 ; `di` -> ?.
@@ -539,8 +503,8 @@ ENDM
 ; variation of `clear_rect` that leaves more registers unchanged.
 ;
 ; input:
-; `ax` x (use `set_xdrawpos`),
-; `bx` y (use `set_ydrawpos`),
+; `ax` x (use `set_draw_x`),
+; `bx` y (use `set_draw_y`),
 ;
 ; effects:
 ; `di` -> ?.
@@ -588,17 +552,25 @@ ENDM
 ;
 
 jmp_kill_player PROC
-    jmp jmp_gameloop_wait    
+    jmp jmp_gameloop_wait
 jmp_kill_player ENDP
 
-set_player_drawpos MACRO
+set_player_draw_rect MACRO
+    ; x
     mov ax, SP_PLAYER_XPOS / PIXELS_TO_SUBPIXELS
 
+    ; y
     mov bx, PlayerYPos
     sar bx, 4 ; divide by 16 (subpixels -> pixels)
+
+    ; width
+    set_draw_width P_SPRITE_SIZE
+
+    ; height
+    set_draw_height P_SPRITE_SIZE
 ENDM
 
-player_jump_check MACRO params
+player_jump_check MACRO
     detect_key_trigger SPACE_MAKECODE
     jne skip_jump
 
@@ -608,29 +580,29 @@ player_jump_check MACRO params
 ENDM
 
 update_player PROC
-    ; clear old player sprite
-    set_player_drawpos
-    set_draw_width P_SPRITE_SIZE
-    set_draw_height P_SPRITE_SIZE
+    ; clear the previous frame's player sprite
+    set_player_draw_rect
     call clear_rect
 
-    ; update velocity
+    ; update the velocity
     add PlayerYVelocity, SP_PLAYER_GRAVITY_SCALE
     player_jump_check
 
-    ; update pposition
+    ; update the position
     mov ax, PlayerYVelocity
     add PlayerYPos, ax
 
-    ; check if player fell to the bottom of the screen
+    ; check if the player fell to the bottom of the screen
     cmp PlayerYPos, (P_SCREEN_HEIGHT - P_SPRITE_SIZE) * 16
-    jge jmp_kill_player
+    jg jmp_kill_player
+
+    ; check if the player flew to the top of the screen
+    cmp PlayerYPos, 0
+    jl jmp_kill_player
 
     ; draw new player sprite
-    set_player_drawpos
-    set_sprite PLAYER_SPRITE
-    set_draw_width P_SPRITE_SIZE
-    set_draw_height P_SPRITE_SIZE
+    set_player_draw_rect
+    set_draw_sprite PLAYER_SPRITE
     call draw_sprite
 
     ret
@@ -761,7 +733,7 @@ ENDM
 ;
 ; effects:
 ; `cx` -> bottom pipe height.
-set_bottom_pipe_height_cx MACRO params
+set_bottom_pipe_height_cx MACRO
     mov cx, [PipePairBottomHeights + si]
 ENDM
 
@@ -789,19 +761,19 @@ ENDM
 draw_pipe_row MACRO left_sprite, right_sprite
     push si
 
-    set_sprite left_sprite
+    set_draw_sprite left_sprite
     draw_sprite_pushed P_SPRITE_SIZE, P_SPRITE_SIZE
 
-    move_drawpos_right P_SPRITE_SIZE
+    move_draw_right P_SPRITE_SIZE
 
-    move_drawpos_right P_SPRITE_SIZE + P_PIPE_CLEAR_OFFSET
+    move_draw_right P_SPRITE_SIZE + P_PIPE_CLEAR_OFFSET
     clear_rect_pushed P_PIPE_CLEAR_OFFSET, P_SPRITE_SIZE
-    move_drawpos_left P_SPRITE_SIZE + P_PIPE_CLEAR_OFFSET
+    move_draw_left P_SPRITE_SIZE + P_PIPE_CLEAR_OFFSET
 
-    set_sprite right_sprite
+    set_draw_sprite right_sprite
     draw_sprite_pushed P_SPRITE_SIZE, P_SPRITE_SIZE
 
-    move_drawpos_left P_SPRITE_SIZE
+    move_draw_left P_SPRITE_SIZE
     move_drawpos_up P_SPRITE_SIZE
 
     pop si
@@ -981,10 +953,8 @@ jmp_gameloop_wait PROC
 jmp_gameloop_wait ENDP
 
 gameloop_wait_update PROC
-    set_player_drawpos
-    set_draw_width P_SPRITE_SIZE
-    set_draw_height P_SPRITE_SIZE
-    set_sprite PLAYER_SPRITE
+    set_player_draw_rect
+    set_draw_sprite PLAYER_SPRITE
     call draw_sprite
 
     call draw_pipes
