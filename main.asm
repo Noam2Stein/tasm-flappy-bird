@@ -31,7 +31,7 @@
 ;
 
 ; GAMEPLAY
-END_OF_FRAME_WAIT equ 10
+END_OF_FRAME_WAIT equ 5
 
 SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
 SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 7
@@ -43,8 +43,12 @@ T_PIPE_WIDTH equ 2
 T_PIPEPAIR_XDISTANCE equ 4
 T_PIPEPAIR_YDISTANCE equ 3
 T_MIN_PIPE_HEIGHT equ 2
-SP_PIPE_VELOCITY equ -20
+SP_PIPE_VELOCITY equ -16
 P_PIPE_CLEAR_OFFSET equ 2
+
+; DEATH
+SP_DEATH_PLAYER_JUMP_VELOCITY equ -100
+SP_DEATH_PLAYER_GRAVITY_SCALE equ 7
 
 ; GRAPHICS
 BACKGROUND_COLOR equ 53
@@ -54,12 +58,18 @@ P_SPRITE_SIZE_LOG2 equ 4
 SPRITE_COUNT equ 256 / P_SPRITE_SIZE
 
 PLAYER_SPRITE        equ 0
-PIPE_L_TOP_SPRITE    equ 1
-PIPE_L_SPRITE        equ 3
-PIPE_L_BOTTOM_SPRITE equ 5
-PIPE_R_TOP_SPRITE    equ 2
-PIPE_R_SPRITE        equ 4
-PIPE_R_BOTTOM_SPRITE equ 6
+PLAYER_FLAP_SPRITE   equ 1
+PLAYER_DEAD_SPRITE   equ 2
+PIPE_L_TOP_SPRITE    equ 3
+PIPE_L_SPRITE        equ 5
+PIPE_L_BOTTOM_SPRITE equ 7
+PIPE_R_TOP_SPRITE    equ 4
+PIPE_R_SPRITE        equ 6
+PIPE_R_BOTTOM_SPRITE equ 8
+
+PLAYER_ANIM_FRAME_DURATION equ 2
+PLAYER_FLAP_ANIM_MIN_VELOCITY equ -5
+
 
 ; UNITS
 PIXELS_TO_SUBPIXELS equ 16
@@ -143,8 +153,10 @@ SP_SCREEN_HEIGHT equ P_SCREEN_HEIGHT * PIXELS_TO_SUBPIXELS
     GameLoopUpdateFn dw ? ; changes based on game-state (wait / gameplay).
 
 ; GAMEPLAY
-    PlayerYPos      dw SP_INITIAL_PLAYER_YPOS
-    PlayerYVelocity dw 0
+    
+    PlayerYPos        dw SP_INITIAL_PLAYER_YPOS
+    PlayerAnimTime dw 0
+    PlayerYVelocity   dw 0
 
     PipePairXPoses        dw PIPEPAIR_COUNT dup (?)
     PipePairBottomHeights dw PIPEPAIR_COUNT dup (?)
@@ -551,7 +563,7 @@ ENDM
 ;
 ;
 
-set_player_draw_rect MACRO
+set_player_draw_rect PROC
     ; x
     mov ax, SP_PLAYER_XPOS / PIXELS_TO_SUBPIXELS
 
@@ -564,20 +576,30 @@ set_player_draw_rect MACRO
 
     ; height
     set_draw_height P_SPRITE_SIZE
-ENDM
+
+    ret
+set_player_draw_rect ENDP
 
 player_jump_check PROC
     detect_key_trigger SPACE_MAKECODE
     jne skip_jump
 
+    mov PlayerAnimTime, 0
     mov PlayerYVelocity, SP_PLAYER_JUMP_VELOCITY
 
     skip_jump:
     ret
 player_jump_check ENDP
 
+move_player MACRO gravity_scale
+    add PlayerYVelocity, gravity_scale
+
+    mov ax, PlayerYVelocity
+    add PlayerYPos, ax
+ENDM
+
 jmp_kill_player PROC
-    jmp jmp_gameloop_wait
+    jmp jmp_gameloop_death
 jmp_kill_player ENDP
 
 player_out_of_bounds_check PROC
@@ -588,10 +610,12 @@ player_out_of_bounds_check PROC
     ; check if the player flew to the top of the screen
     cmp PlayerYPos, 0
     jl jmp_kill_player
+
+    ret
 player_out_of_bounds_check ENDP
 
 player_collision_check PROC
-    set_player_draw_rect
+    call set_player_draw_rect
 
     ; check top left corner
     move_draw_left 1
@@ -621,27 +645,53 @@ player_collision_check PROC
     ret
 player_collision_check ENDP
 
+draw_player_anim PROC
+    inc PlayerAnimTime
+
+    cmp PlayerYVelocity, -PLAYER_FLAP_ANIM_MIN_VELOCITY
+    jl select_frame
+    mov PlayerAnimTime, 0
+
+    select_frame:
+
+    cmp PlayerAnimTime, PLAYER_ANIM_FRAME_DURATION * 2
+    jge player_anim_frame_a_reset
+    cmp PlayerAnimTime, PLAYER_ANIM_FRAME_DURATION
+    jge player_anim_frame_b
+    jmp player_anim_frame_a
+
+    player_anim_frame_a:
+    set_draw_sprite PLAYER_SPRITE
+    jmp draw_player
+
+    player_anim_frame_b:
+    set_draw_sprite PLAYER_FLAP_SPRITE
+    jmp draw_player
+
+    player_anim_frame_a_reset:
+    sub PlayerAnimTime, PLAYER_ANIM_FRAME_DURATION * 2
+    set_draw_sprite PLAYER_SPRITE
+    jmp draw_player
+
+    draw_player:
+    call set_player_draw_rect
+    call draw_sprite
+
+    ret
+draw_player_anim ENDP
+
 update_player PROC
-    ; clear the previous frame's player sprite
-    set_player_draw_rect
+    call set_player_draw_rect
     call clear_rect
 
-    ; update the velocity
-    add PlayerYVelocity, SP_PLAYER_GRAVITY_SCALE
     call player_jump_check
 
-    ; update the position
-    mov ax, PlayerYVelocity
-    add PlayerYPos, ax
+    move_player SP_PLAYER_GRAVITY_SCALE
 
-    ; check for death
     call player_collision_check
     call player_out_of_bounds_check
 
-    ; draw new player sprite
-    set_player_draw_rect
-    set_draw_sprite PLAYER_SPRITE
-    call draw_sprite
+    call draw_player_anim
 
     ret
 update_player ENDP
@@ -991,7 +1041,7 @@ jmp_gameloop_wait PROC
 jmp_gameloop_wait ENDP
 
 gameloop_wait_update PROC
-    set_player_draw_rect
+    call set_player_draw_rect
     set_draw_sprite PLAYER_SPRITE
     call draw_sprite
 
@@ -1002,6 +1052,41 @@ gameloop_wait_update PROC
 
     ret
 gameloop_wait_update ENDP
+
+;
+;
+;
+;
+; DEATH GAME-STATE
+;
+;
+;
+;
+
+; * doesn't return, meant to be used with `jmp` and not `call`.
+jmp_gameloop_death PROC
+    mov PlayerYVelocity, SP_DEATH_PLAYER_JUMP_VELOCITY
+
+    mov GameLoopUpdateFn, offset gameloop_death_update
+
+    jmp main_loop
+jmp_gameloop_death ENDP
+
+gameloop_death_update PROC
+    call set_player_draw_rect
+    call clear_rect
+    move_player SP_DEATH_PLAYER_GRAVITY_SCALE
+    call set_player_draw_rect
+    set_draw_sprite PLAYER_DEAD_SPRITE
+    call draw_sprite
+
+    call draw_pipes
+
+    cmp PlayerYPos, SP_SCREEN_HEIGHT
+    jge jmp_gameloop_wait
+
+    ret
+gameloop_death_update ENDP
 
 ;
 ;
