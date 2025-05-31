@@ -295,6 +295,8 @@ ENDM
 ; input:
 ; `ax` -> x,
 ; `bx` -> y,
+; `cx` -> width,
+; `dx` -> height,
 ; `si` -> sprite origin.
 ;
 ; effects:
@@ -303,12 +305,7 @@ ENDM
 ; `cx` -> new width,
 ; `dx` -> new height,
 ; `si` -> new sprite origin.
-clip_sprite PROC
-    mov cx, P_SPRITE_SIZE
-    mov dx, P_SPRITE_SIZE
-
-    ; right now `ax`, `bx`, `cx`, and `dx` contain the unclipped rect.
-    
+clip_draw_rect PROC
     cmp ax, 0
     jge post_clip_left
     ; clip left
@@ -343,7 +340,7 @@ clip_sprite PROC
     sub dx, bx ; now `dx` contains the rect's height again
 
     ret
-clip_sprite ENDP
+clip_draw_rect ENDP
 
 ;
 ;
@@ -412,6 +409,16 @@ set_ydrawpos MACRO y
     mov bx, y
 ENDM
 
+; affects the draw width which is stored in `cx`.
+set_draw_width MACRO width
+    mov cx, width
+ENDM
+
+; affects the draw height which is stored in `dx`.
+set_draw_height MACRO height
+    mov dx, height
+ENDM
+
 ; affects the drawpos which is stored using `ax` as X and `bx` as Y.
 move_drawpos_right MACRO amount
     add ax, amount
@@ -437,12 +444,14 @@ set_sprite MACRO sprite
     mov si, offset SpritesBuf + sprite * SPRITE_BUF_SIZE
 ENDM
 
-; draws a sprite with a configurable position and an unconfigurable size.
+; draws a sprite with a configurable rect.
 ;
 ; input:
-; `ax` x (use `set_xdrawpos`),
-; `bx` y (use `set_ydrawpos`),
-; `si` sprite ptr (use `set_sprite`).
+; `ax` -> x (use `set_xdrawpos`),
+; `bx` -> y (use `set_ydrawpos`),
+; `cx` -> width (use `set_draw_width`),
+; `dx` -> height (use `set_draw_height`),
+; `si` -> sprite ptr (use `set_sprite`).
 ;
 ; effects:
 ; `ax` -> ?,
@@ -452,7 +461,7 @@ ENDM
 ; `si` -> ?,
 ; `di` -> ?.
 draw_sprite PROC
-    call clip_sprite
+    call clip_draw_rect
     call set_drawpos_di
     mov ax, cx
     mov bx, dx
@@ -469,11 +478,13 @@ draw_sprite PROC
     ret
 draw_sprite ENDP
 
-; clears a sprite with a configurable position and an unconfigurable size to `BACKGROUND_COLOR`.
+; clears a configurable rect.
 ;
 ; input:
-; `ax` x (use `set_xdrawpos`),
-; `bx` y (use `set_ydrawpos`),
+; `ax` -> x (use `set_xdrawpos`),
+; `bx` -> y (use `set_ydrawpos`),
+; `cx` -> width (use `set_draw_width`),
+; `dx` -> height (use `set_draw_height`).
 ;
 ; effects:
 ; `ax` -> ?,
@@ -482,8 +493,8 @@ draw_sprite ENDP
 ; `dx` -> ?,
 ; `si` -> ?,
 ; `di` -> ?.
-clear_sprite PROC
-    call clip_sprite
+clear_rect PROC
+    call clip_draw_rect
     call set_drawpos_di
     mov ax, cx
     mov bx, dx
@@ -498,11 +509,9 @@ clear_sprite PROC
     loop_end clear_sprite_loop, clear_sprite_loop_end
 
     ret
-clear_sprite ENDP
+clear_rect ENDP
 
-; variation of `draw_sprite` that leaves more registers unchanged.
-;
-; draws a sprite with a configurable position and an unconfigurable size.
+; variation of `draw_sprite` that leaves more registers unchanged and requires a constant size.
 ;
 ; input:
 ; `ax` x (use `set_xdrawpos`),
@@ -511,25 +520,23 @@ clear_sprite ENDP
 ;
 ; effects:
 ; `di` -> ?.
-draw_sprite_pushed PROC
+draw_sprite_pushed MACRO width, height
     push ax
     push bx
     push cx
     push dx
     push si
+    set_draw_width width
+    set_draw_height height
     call draw_sprite
     pop si
     pop dx
     pop cx
     pop bx
     pop ax
+ENDM
 
-    ret
-draw_sprite_pushed ENDP
-
-; variation of `clear_sprite` that leaves more registers unchanged.
-;
-; clears a sprite with a configurable position and an unconfigurable size to `BACKGROUND_COLOR`.
+; variation of `clear_rect` that leaves more registers unchanged.
 ;
 ; input:
 ; `ax` x (use `set_xdrawpos`),
@@ -537,21 +544,21 @@ draw_sprite_pushed ENDP
 ;
 ; effects:
 ; `di` -> ?.
-clear_sprite_pushed PROC
+clear_rect_pushed MACRO width, height
     push ax
     push bx
     push cx
     push dx
     push si
-    call clear_sprite
+    set_draw_width width
+    set_draw_height height
+    call clear_rect
     pop si
     pop dx
     pop cx
     pop bx
     pop ax
-
-    ret
-clear_sprite_pushed ENDP
+ENDM
 
 ;
 ;
@@ -603,7 +610,9 @@ ENDM
 update_player PROC
     ; clear old player sprite
     set_player_drawpos
-    call clear_sprite
+    set_draw_width P_SPRITE_SIZE
+    set_draw_height P_SPRITE_SIZE
+    call clear_rect
 
     ; update velocity
     add PlayerYVelocity, SP_PLAYER_GRAVITY_SCALE
@@ -620,6 +629,8 @@ update_player PROC
     ; draw new player sprite
     set_player_drawpos
     set_sprite PLAYER_SPRITE
+    set_draw_width P_SPRITE_SIZE
+    set_draw_height P_SPRITE_SIZE
     call draw_sprite
 
     ret
@@ -779,18 +790,16 @@ draw_pipe_row MACRO left_sprite, right_sprite
     push si
 
     set_sprite left_sprite
-    move_drawpos_right P_PIPE_CLEAR_OFFSET
-    call clear_sprite_pushed
-    move_drawpos_left P_PIPE_CLEAR_OFFSET
-    call draw_sprite_pushed
+    draw_sprite_pushed P_SPRITE_SIZE, P_SPRITE_SIZE
 
     move_drawpos_right P_SPRITE_SIZE
 
+    move_drawpos_right P_SPRITE_SIZE + P_PIPE_CLEAR_OFFSET
+    clear_rect_pushed P_PIPE_CLEAR_OFFSET, P_SPRITE_SIZE
+    move_drawpos_left P_SPRITE_SIZE + P_PIPE_CLEAR_OFFSET
+
     set_sprite right_sprite
-    move_drawpos_right P_PIPE_CLEAR_OFFSET
-    call clear_sprite_pushed
-    move_drawpos_left P_PIPE_CLEAR_OFFSET
-    call draw_sprite_pushed
+    draw_sprite_pushed P_SPRITE_SIZE, P_SPRITE_SIZE
 
     move_drawpos_left P_SPRITE_SIZE
     move_drawpos_up P_SPRITE_SIZE
@@ -973,6 +982,8 @@ jmp_gameloop_wait ENDP
 
 gameloop_wait_update PROC
     set_player_drawpos
+    set_draw_width P_SPRITE_SIZE
+    set_draw_height P_SPRITE_SIZE
     set_sprite PLAYER_SPRITE
     call draw_sprite
 
