@@ -163,6 +163,12 @@ SP_SCREEN_HEIGHT equ P_SCREEN_HEIGHT * PIXELS_TO_SUBPIXELS
 
 .code
 
+smart_loop MACRO label_
+    dec cx
+    cmp cx, 0
+    jg label_
+ENDM
+
 ;
 ;
 ;
@@ -243,9 +249,8 @@ draw_sprite_row MACRO
     rep movsb
     pop cx
 
-    add si, P_SPRITE_SIZE
+    sub di, ax ; revert the `di` progression caused by `movsb`
     add di, P_SCREEN_WIDTH
-    sub di, ax
 ENDM
 
 ; input:
@@ -261,26 +266,61 @@ clear_sprite_row MACRO
     pop ax
     pop cx
 
+    sub di, ax ; revert the `di` progression caused by `stosb`
     add di, P_SCREEN_WIDTH
-    sub di, ax
 ENDM
 
 ; clips the sprite rect, removing offscreen parts.
 ;
 ; input:
 ; `ax` -> x,
-; `bx` -> y.
+; `bx` -> y,
+; `si` -> sprite origin.
 ;
 ; effects:
 ; `ax` -> new x,
 ; `bx` -> new y,
 ; `cx` -> new width,
-; `dx` -> new height.
+; `dx` -> new height,
+; `si` -> new sprite origin.
 clip_sprite PROC
-    ; unfinished ignore this right now
-
     mov cx, P_SPRITE_SIZE
     mov dx, P_SPRITE_SIZE
+
+    ; right now `ax`, `bx`, `cx`, and `dx` contain the unclipped rect.
+    
+    cmp ax, 0
+    jge post_clip_left
+    ; clip left
+    add cx, ax
+    sub si, ax
+    mov ax, 0 ; clip left always leaves the xpos at `0`
+    post_clip_left:
+
+    cmp bx, 0
+    jge post_clip_top
+    ; clip top
+    add dx, bx
+    shl bx, P_SPRITE_SIZE_LOG2 ; now `bx` contains `unclipped_ypos * P_SPRITE_SIZE`
+    sub si, bx
+    mov bx, 0 ; top left always leaves the ypos at `0`
+    post_clip_top:
+
+    add cx, ax ; now `cx` contains the rect's right edge
+    cmp cx, P_SCREEN_WIDTH
+    jle post_clip_right
+    ; clip right
+    mov cx, P_SCREEN_WIDTH
+    post_clip_right:
+    sub cx, ax ; now `cx` contains the rect's width again
+
+    add dx, bx ; now `dx` contains the rect's bottom edge
+    cmp dx, P_SCREEN_HEIGHT
+    jle post_clip_bottom
+    ; clip bottom
+    mov dx, P_SCREEN_HEIGHT
+    post_clip_bottom:
+    sub dx, bx ; now `dx` contains the rect's height again
 
     ret
 clip_sprite ENDP
@@ -399,11 +439,12 @@ draw_sprite PROC
 
     ; when calling this proc `ax` and `bx` store the drawpos which is now unused.
     ; from this point they hold the drawsize which is affected by clipping.
+    ; moving the drawsize to `ax` and `bx` leaves `cx` and `dx` unused for `draw_sprite_row`.
 
     mov cx, bx
     draw_sprite_loop:
     draw_sprite_row
-    loop draw_sprite_loop
+    smart_loop draw_sprite_loop
 
     ret
 draw_sprite ENDP
@@ -419,6 +460,7 @@ draw_sprite ENDP
 ; `bx` -> ?,
 ; `cx` -> ?,
 ; `dx` -> ?,
+; `si` -> ?,
 ; `di` -> ?.
 clear_sprite PROC
     call clip_sprite
@@ -428,11 +470,12 @@ clear_sprite PROC
 
     ; when calling this proc `ax` and `bx` store the drawpos which is now unused.
     ; from this point they hold the drawsize which is affected by clipping.
+    ; moving the drawsize to `ax` and `bx` leaves `cx` and `dx` unused for `clear_sprite_row`.
 
     mov cx, bx
     clear_sprite_loop:
     clear_sprite_row
-    loop clear_sprite_loop
+    smart_loop clear_sprite_loop
 
     ret
 clear_sprite ENDP
@@ -447,14 +490,15 @@ clear_sprite ENDP
 ; `si` sprite ptr (use `set_sprite`).
 ;
 ; effects:
-; `si` -> ?,
 ; `di` -> ?.
 draw_sprite_pushed PROC
     push ax
     push bx
     push cx
     push dx
+    push si
     call draw_sprite
+    pop si
     pop dx
     pop cx
     pop bx
@@ -478,7 +522,9 @@ clear_sprite_pushed PROC
     push bx
     push cx
     push dx
+    push si
     call clear_sprite
+    pop si
     pop dx
     pop cx
     pop bx
@@ -633,7 +679,7 @@ init_pipepairs PROC
     call init_pipepair_bottom_height
     call init_pipepair_x_pos
 
-    loop init_pipepairs_loop
+    smart_loop init_pipepairs_loop
 
     ret
 init_pipepairs ENDP
@@ -713,7 +759,7 @@ draw_bottom_pipe PROC
     dec cx
     draw_bottom_pipe_rows:
     draw_pipe_row PIPE_L_SPRITE, PIPE_R_SPRITE
-    loop draw_bottom_pipe_rows
+    smart_loop draw_bottom_pipe_rows
 
     draw_pipe_row PIPE_L_TOP_SPRITE, PIPE_R_TOP_SPRITE
 
@@ -732,7 +778,7 @@ draw_top_pipe PROC
 
     draw_top_pipe_rows:
     draw_pipe_row PIPE_L_SPRITE, PIPE_R_SPRITE
-    loop draw_top_pipe_rows
+    smart_loop draw_top_pipe_rows
 
     ret
 draw_top_pipe ENDP
@@ -746,7 +792,7 @@ draw_pipes PROC
     call draw_top_pipe
     pop cx
 
-    loop draw_pipes_loop
+    smart_loop draw_pipes_loop
 
     ret
 draw_pipes ENDP
@@ -755,7 +801,7 @@ update_pipes PROC
     pipepair_loop update_pipes_loop
     set_pipepair_si
     add [PipePairXPoses + si], SP_PIPE_VELOCITY
-    loop update_pipes_loop
+    smart_loop update_pipes_loop
 
     call draw_pipes
 update_pipes ENDP
@@ -796,6 +842,8 @@ gameloop_gameplay_update ENDP
 
 ; * doesn't return, meant to be used with `jmp` and not `call`.
 jmp_gameloop_wait PROC
+    clear_screen BACKGROUND_COLOR
+
     mov PlayerYPos, SP_INITIAL_PLAYER_YPOS
     mov PlayerYVelocity, 0
     
@@ -859,7 +907,7 @@ initialize PROC
 
     clear_screen BACKGROUND_COLOR
 
-    call gameloop_gameplay_update;jmp_gameloop_wait
+    call jmp_gameloop_wait
 
     ret
 initialize ENDP
