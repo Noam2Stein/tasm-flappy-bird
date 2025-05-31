@@ -35,7 +35,7 @@ END_OF_FRAME_WAIT equ 5
 
 SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
 SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 7
-SP_PLAYER_JUMP_VELOCITY equ -40
+SP_PLAYER_JUMP_VELOCITY equ 40
 SP_PLAYER_GRAVITY_SCALE equ 6
 
 PIPEPAIR_COUNT equ 4
@@ -47,7 +47,7 @@ SP_PIPE_VELOCITY equ -16
 P_PIPE_CLEAR_OFFSET equ 2
 
 ; DEATH
-SP_DEATH_PLAYER_JUMP_VELOCITY equ -100
+SP_DEATH_PLAYER_JUMP_VELOCITY equ 100
 SP_DEATH_PLAYER_GRAVITY_SCALE equ 7
 
 ; GRAPHICS
@@ -67,7 +67,7 @@ PIPE_R_TOP_SPRITE    equ 4
 PIPE_R_SPRITE        equ 6
 PIPE_R_BOTTOM_SPRITE equ 8
 
-PLAYER_ANIM_FRAME_DURATION equ 2
+PLAYER_ANIM_FRAME_DURATION equ 3
 PLAYER_FLAP_ANIM_MIN_VELOCITY equ -5
 
 
@@ -584,8 +584,7 @@ player_jump_check PROC
     detect_key_trigger SPACE_MAKECODE
     jne skip_jump
 
-    mov PlayerAnimTime, 0
-    mov PlayerYVelocity, SP_PLAYER_JUMP_VELOCITY
+    mov PlayerYVelocity, -SP_PLAYER_JUMP_VELOCITY
 
     skip_jump:
     ret
@@ -651,6 +650,7 @@ draw_player_anim PROC
     cmp PlayerYVelocity, -PLAYER_FLAP_ANIM_MIN_VELOCITY
     jl select_frame
     mov PlayerAnimTime, 0
+    jmp player_anim_frame_b
 
     select_frame:
 
@@ -661,11 +661,11 @@ draw_player_anim PROC
     jmp player_anim_frame_a
 
     player_anim_frame_a:
-    set_draw_sprite PLAYER_SPRITE
+    set_draw_sprite PLAYER_FLAP_SPRITE
     jmp draw_player
 
     player_anim_frame_b:
-    set_draw_sprite PLAYER_FLAP_SPRITE
+    set_draw_sprite PLAYER_SPRITE
     jmp draw_player
 
     player_anim_frame_a_reset:
@@ -1065,7 +1065,7 @@ gameloop_wait_update ENDP
 
 ; * doesn't return, meant to be used with `jmp` and not `call`.
 jmp_gameloop_death PROC
-    mov PlayerYVelocity, SP_DEATH_PLAYER_JUMP_VELOCITY
+    mov PlayerYVelocity, -SP_DEATH_PLAYER_JUMP_VELOCITY
 
     mov GameLoopUpdateFn, offset gameloop_death_update
 
