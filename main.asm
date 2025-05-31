@@ -551,10 +551,6 @@ ENDM
 ;
 ;
 
-jmp_kill_player PROC
-    jmp jmp_gameloop_wait
-jmp_kill_player ENDP
-
 set_player_draw_rect MACRO
     ; x
     mov ax, SP_PLAYER_XPOS / PIXELS_TO_SUBPIXELS
@@ -570,14 +566,60 @@ set_player_draw_rect MACRO
     set_draw_height P_SPRITE_SIZE
 ENDM
 
-player_jump_check MACRO
+player_jump_check PROC
     detect_key_trigger SPACE_MAKECODE
     jne skip_jump
 
     mov PlayerYVelocity, SP_PLAYER_JUMP_VELOCITY
 
     skip_jump:
-ENDM
+    ret
+player_jump_check ENDP
+
+jmp_kill_player PROC
+    jmp jmp_gameloop_wait
+jmp_kill_player ENDP
+
+player_out_of_bounds_check PROC
+    ; check if the player fell to the bottom of the screen
+    cmp PlayerYPos, (P_SCREEN_HEIGHT - P_SPRITE_SIZE) * 16
+    jg jmp_kill_player
+
+    ; check if the player flew to the top of the screen
+    cmp PlayerYPos, 0
+    jl jmp_kill_player
+player_out_of_bounds_check ENDP
+
+player_collision_check PROC
+    set_player_draw_rect
+
+    ; check top left corner
+    move_draw_left 1
+    move_drawpos_up 1
+    call set_draw_di
+    cmp byte ptr es:[di], BACKGROUND_COLOR
+    jne jmp_kill_player
+
+    ; check top right corner
+    move_draw_right P_SPRITE_SIZE + 1
+    call set_draw_di
+    cmp byte ptr es:[di], BACKGROUND_COLOR
+    jne jmp_kill_player
+
+    ; check bottom right corner
+    move_draw_down P_SPRITE_SIZE + 1
+    call set_draw_di
+    cmp byte ptr es:[di], BACKGROUND_COLOR
+    jne jmp_kill_player
+
+    ; check bottom left corner
+    move_draw_left P_SPRITE_SIZE + 1
+    call set_draw_di
+    cmp byte ptr es:[di], BACKGROUND_COLOR
+    jne jmp_kill_player
+
+    ret
+player_collision_check ENDP
 
 update_player PROC
     ; clear the previous frame's player sprite
@@ -586,19 +628,15 @@ update_player PROC
 
     ; update the velocity
     add PlayerYVelocity, SP_PLAYER_GRAVITY_SCALE
-    player_jump_check
+    call player_jump_check
 
     ; update the position
     mov ax, PlayerYVelocity
     add PlayerYPos, ax
 
-    ; check if the player fell to the bottom of the screen
-    cmp PlayerYPos, (P_SCREEN_HEIGHT - P_SPRITE_SIZE) * 16
-    jg jmp_kill_player
-
-    ; check if the player flew to the top of the screen
-    cmp PlayerYPos, 0
-    jl jmp_kill_player
+    ; check for death
+    call player_collision_check
+    call player_out_of_bounds_check
 
     ; draw new player sprite
     set_player_draw_rect
