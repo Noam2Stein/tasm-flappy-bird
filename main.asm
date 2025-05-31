@@ -31,17 +31,20 @@
 ;
 
 ; GAMEPLAY
-SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
-SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 5
-SP_PLAYER_JUMP_VELOCITY equ -20
+END_OF_FRAME_WAIT equ 10
 
-PIPEPAIR_COUNT equ 5
+SP_INITIAL_PLAYER_YPOS equ SP_SCREEN_HEIGHT / 2
+SP_PLAYER_XPOS equ SP_SCREEN_WIDTH / 7
+SP_PLAYER_JUMP_VELOCITY equ -50
+SP_PLAYER_GRAVITY_SCALE equ 6
+
+PIPEPAIR_COUNT equ 4
 T_PIPE_WIDTH equ 2
-T_PIPEPAIR_XDISTANCE equ 5
-T_PIPEPAIR_YDISTANCE equ 5
-T_MIN_PIPE_HEIGHT equ 3
-SP_PIPE_VELOCITY equ -10
-P_PIPE_CLEAR_OFFSET equ 1
+T_PIPEPAIR_XDISTANCE equ 4
+T_PIPEPAIR_YDISTANCE equ 3
+T_MIN_PIPE_HEIGHT equ 2
+SP_PIPE_VELOCITY equ -20
+P_PIPE_CLEAR_OFFSET equ 2
 
 ; GRAPHICS
 BACKGROUND_COLOR equ 53
@@ -57,9 +60,6 @@ PIPE_L_BOTTOM_SPRITE equ 5
 PIPE_R_TOP_SPRITE    equ 2
 PIPE_R_SPRITE        equ 4
 PIPE_R_BOTTOM_SPRITE equ 6
-
-; GAMELOOP
-END_OF_FRAME_WAIT equ 10
 
 ; UNITS
 PIXELS_TO_SUBPIXELS equ 16
@@ -321,7 +321,7 @@ clip_sprite PROC
     jge post_clip_top
     ; clip top
     add dx, bx
-    shl bx, P_SPRITE_SIZE_LOG2 ; now `bx` contains `unclipped_ypos * P_SPRITE_SIZE`
+    sal bx, P_SPRITE_SIZE_LOG2 ; now `bx` contains `unclipped_ypos * P_SPRITE_SIZE`
     sub si, bx
     mov bx, 0 ; top left always leaves the ypos at `0`
     post_clip_top:
@@ -580,16 +580,15 @@ ENDM
 ;
 ;
 
-; dont call, use jmp stuff
-on_player_hit_bottom PROC
-    jmp jmp_gameloop_wait
-on_player_hit_bottom ENDP
+jmp_kill_player PROC
+    jmp jmp_gameloop_wait    
+jmp_kill_player ENDP
 
 set_player_drawpos MACRO
-    mov ax, SP_PLAYER_XPOS / 16
+    mov ax, SP_PLAYER_XPOS / PIXELS_TO_SUBPIXELS
 
     mov bx, PlayerYPos
-    shr bx, 4 ; divide by 16 (subpixels -> pixels)
+    sar bx, 4 ; divide by 16 (subpixels -> pixels)
 ENDM
 
 player_jump_check MACRO params
@@ -607,7 +606,7 @@ update_player PROC
     call clear_sprite
 
     ; update velocity
-    inc PlayerYVelocity
+    add PlayerYVelocity, SP_PLAYER_GRAVITY_SCALE
     player_jump_check
 
     ; update pposition
@@ -616,7 +615,7 @@ update_player PROC
 
     ; check if player fell to the bottom of the screen
     cmp PlayerYPos, (P_SCREEN_HEIGHT - P_SPRITE_SIZE) * 16
-    jae on_player_hit_bottom
+    jge jmp_kill_player
 
     ; draw new player sprite
     set_player_drawpos
@@ -688,9 +687,10 @@ init_pipepair_ypos PROC
     ; randomize `bx` with unique values
     add bx, dx
     add bx, PlayerYVelocity
-    xor bx, PlayerYPos
+    add bx, PlayerYPos
 
     ; constraint `bx` to `0..16`
+    shl bx, 1
     and bx, 000Fh
 
     ; scale `bx` to `T_MIN_PIPE_HEIGHT..=T_MAX_PIPE_HEIGHT`
@@ -698,7 +698,6 @@ init_pipepair_ypos PROC
     mul bl
     mov bx, ax
     shr bx, 4
-    and bx, 0FFFh
     add bx, T_MIN_PIPE_HEIGHT
 
     mov [PipePairBottomHeights + si], bx
@@ -842,7 +841,6 @@ draw_top_pipe PROC
     set_top_pipe_drawpos
     draw_pipe_row PIPE_L_BOTTOM_SPRITE, PIPE_R_BOTTOM_SPRITE
 
-    mov cx, 4
     loop_start draw_top_pipe_loop, draw_top_pipe_loop_end
     draw_pipe_row PIPE_L_SPRITE, PIPE_R_SPRITE
     loop_end draw_top_pipe_loop, draw_top_pipe_loop_end
@@ -910,7 +908,14 @@ draw_pipes ENDP
 update_pipes PROC
     pipepair_loop update_pipes_loop
     set_pipepair_si
+    
     add [PipePairXPoses + si], SP_PIPE_VELOCITY
+
+    cmp [PipePairXPoses + si], -(SP_PIPE_WIDTH + 16)
+    jg post_teleport_pipepair
+    add [PipePairXPoses + si], (SP_PIPE_WIDTH + SP_PIPEPAIR_XDISTANCE) * PIPEPAIR_COUNT
+    post_teleport_pipepair:
+
     loop update_pipes_loop
 
     call draw_pipes
