@@ -761,7 +761,7 @@ init_pipepair_ypos PROC
     add bx, PlayerYPos
 
     ; constraint `bx` to `0..16`
-    shl bx, 1
+    ;shl bx, 1
     and bx, 000Fh
 
     ; scale `bx` to `T_MIN_PIPE_HEIGHT..=T_MAX_PIPE_HEIGHT`
@@ -983,6 +983,7 @@ update_pipes PROC
     cmp [PipePairXPoses + si], -(SP_PIPE_WIDTH + 16)
     jg post_teleport_pipepair
     add [PipePairXPoses + si], (SP_PIPE_WIDTH + SP_PIPEPAIR_XDISTANCE) * PIPEPAIR_COUNT
+    call init_pipepair_ypos
     post_teleport_pipepair:
 
     loop update_pipes_loop
@@ -1030,10 +1031,10 @@ gameloop_gameplay_update ENDP
 jmp_gameloop_wait PROC
     clear_screen BACKGROUND_COLOR
 
+    call init_pipepairs
+
     mov PlayerYPos, SP_INITIAL_PLAYER_YPOS
     mov PlayerYVelocity, 0
-    
-    call init_pipepairs
 
     mov GameLoopUpdateFn, offset gameloop_wait_update
 
