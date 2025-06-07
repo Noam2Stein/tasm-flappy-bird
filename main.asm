@@ -761,7 +761,6 @@ init_pipepair_ypos PROC
     add bx, PlayerYPos
 
     ; constraint `bx` to `0..16`
-    ;shl bx, 1
     and bx, 000Fh
 
     ; scale `bx` to `T_MIN_PIPE_HEIGHT..=T_MAX_PIPE_HEIGHT`
