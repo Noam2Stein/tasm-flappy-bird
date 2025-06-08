@@ -546,9 +546,10 @@ ENDM
 ;
 ;
 
-; `eq` flag represents whether or not the key was just triggered.
-; changes `al`.
-detect_key_trigger MACRO makecode
+; effects:
+; `eq` flag -> whether or not the key is held.
+; `al` -> ?.
+detect_key MACRO makecode
     in al, 60h
     cmp al, makecode
 ENDM
@@ -581,7 +582,7 @@ set_player_draw_rect PROC
 set_player_draw_rect ENDP
 
 player_jump_check PROC
-    detect_key_trigger SPACE_MAKECODE
+    detect_key SPACE_MAKECODE
     jne skip_jump
 
     mov PlayerYVelocity, -SP_PLAYER_JUMP_VELOCITY
@@ -1047,7 +1048,7 @@ gameloop_wait_update PROC
 
     call draw_pipes
 
-    detect_key_trigger SPACE_MAKECODE
+    detect_key SPACE_MAKECODE
     je jmp_gameloop_gameplay
 
     ret
@@ -1099,7 +1100,7 @@ gameloop_death_update ENDP
 ;
 
 ; changes `ax`, and `ds`.
-init_ds_as_data_segment MACRO
+init_datasegment_ds MACRO
     mov ax, @data
     mov ds, ax
 ENDM
@@ -1123,7 +1124,7 @@ initialize PROC
     mov dx, 'd' + 'x'
 
     init_video_mode
-    init_ds_as_data_segment
+    init_datasegment_ds
     call load_sprites
 
     clear_screen BACKGROUND_COLOR
@@ -1206,7 +1207,7 @@ main PROC
     main_loop:
     call update
 
-    detect_key_trigger ESCAPE_MAKECODE
+    detect_key ESCAPE_MAKECODE
     jne main_loop ; repeat update if escape wasn't pressed
 
     call clean_up
